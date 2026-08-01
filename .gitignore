@@ -14,5 +14,8 @@
 *.db-wal
 *.db-shm
 
+# Local tool configuration
+.claude/
+
 # OS
 .DS_Store

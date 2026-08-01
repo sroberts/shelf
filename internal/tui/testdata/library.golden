@@ -1,0 +1,12 @@
+shelf    Library    Devices    Sync
+
+ / to filter
+    TITLE                                      AUTHOR                  SERIES                  SIZE
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
+ ·  A Wizard of Earthsea                       Ursula K. Le Guin       Earthsea #1           1.3 KB
+ ·  Moby-Dick                                  Herman Melville                              23.7 MB
+ ·  The Exceedingly Long Title That Will Cert… Verbose, A.                                   4.0 KB
+ ·  海辺のカフカ                               村上 春樹                                     1.1 MB
+ 4 books — space to select, s to sync, / to filter
+
+ k/↑ up • j/↓ down • / filter • space toggle selection • s sync selection • tab next screen • ? help • q quit

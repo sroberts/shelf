@@ -16,16 +16,33 @@ derived cache you can delete at any time.
 
 ## Status
 
-M0–M2 are implemented and tested. Not yet verified against real hardware.
+M0–M3 are implemented, tested, and verified against real hardware (an X4 on firmware 1.4.1).
 
 | Milestone | Scope | State |
 |---|---|---|
 | M0 | EPUB parsing, library index, scan and search | done |
 | M1 | Device HTTP client and discovery | done |
 | M2 | WebSocket upload and the sync engine | done |
+| M3 | Terminal interface: library, devices, sync | done |
 
-The TUI, PDF conversion, EPUB optimization, and KOReader progress sync are designed in `spec.md`
-but deliberately out of scope for now.
+PDF conversion, EPUB optimization, and KOReader progress sync are designed in `spec.md` but not
+yet built. The spec's Settings screen is blocked upstream — see the firmware note below.
+
+## The terminal interface
+
+Run `shelf` with no arguments. Vim keys, `?` for help, `tab` to cycle screens.
+
+- **Library** — filter with `/`, select with `space` or `v`, sync with `s`. A glyph column shows
+  each book's sync state against the active device.
+- **Devices** — live status: model, firmware, mode, signal, free heap, uptime.
+- **Sync** — plan preview, confirmation, then live progress driven by the device's own frames.
+
+`--no-tui` forces the CLI, and a non-interactive stdout does the same automatically, so scripts
+and cron jobs never get a screenful of escape codes. Every operation is available headless.
+
+Cover art renders through the kitty graphics protocol or sixel where the terminal supports it,
+falling back to unicode half-blocks everywhere else. Inside tmux or screen it deliberately uses
+blocks, since multiplexer passthrough is unreliable. Override with `ui.graphics` in the config.
 
 ## Commands
 
@@ -40,6 +57,7 @@ shelf sync [SHELF] [--dry-run]          send a shelf to a device
 shelf push FILE... --to /Books          upload directly
 shelf pull PATH... [--out DIR]          download from a device
 shelf doctor [--offline]                check config, paths, and connectivity
+shelf --no-tui                          force CLI mode
 ```
 
 Search accepts a small query language: bare words hit the full-text index,
@@ -55,6 +73,12 @@ cross-compiling is trivial.
 go build ./...
 go test ./...
 ```
+
+## A firmware hazard worth knowing
+
+`GET /api/settings` **crashes** an X4 running 1.4.1: no response, then a reboot that leaves the SD
+card unmounted until it is reseated. Nothing in shelf calls that endpoint, and `shelf doctor` does
+not probe it. See `SettingsEndpointUnsafe` in `internal/device/compat.go`.
 
 ## Design notes
 

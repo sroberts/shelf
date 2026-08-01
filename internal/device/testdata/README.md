@@ -3,6 +3,13 @@
 Captured from real hardware, not hand-written. When the firmware and these files
 disagree, re-capture rather than editing by hand.
 
+**Two fields are anonymized.** The `ip` in `status.json` and the filenames in
+`files_root.json` were replaced before publishing: one is a home LAN address,
+the other was somebody's actual reading list. Everything the tests assert on --
+the field names, the sizes, the flags, the absence of any mtime or checksum --
+is exactly as the device returned it. Anonymize the same two fields when
+re-capturing.
+
 | File | Source |
 |---|---|
 | `status.json` | `GET /api/status` |

@@ -57,16 +57,38 @@ func run() int {
 	var (
 		configPath = flag.String("config", "", "path to config.toml (default: XDG config directory)")
 		libraryDir = flag.String("library", "", "library root (overrides config)")
+		noTUI      = flag.Bool("no-tui", false, "never launch the terminal interface")
 		showHelp   = flag.Bool("help", false, "show help")
 	)
 	flag.Usage = func() { usage(os.Stderr) }
 	flag.Parse()
 
 	args := flag.Args()
-	if *showHelp || len(args) == 0 {
+	if *showHelp {
 		usage(os.Stdout)
-		if len(args) == 0 && !*showHelp {
+		return exitOK
+	}
+
+	// Ctrl-C cancels the context. Long operations check it and stop cleanly
+	// rather than being killed mid-write.
+	rootCtx, stopSignals := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	// Bare `shelf` opens the TUI. With --no-tui, or when stdout is not a
+	// terminal, fall back to help so a script does not get escape-code soup.
+	if len(args) == 0 {
+		if *noTUI || !isInteractive() {
+			usage(os.Stdout)
 			return exitUsage
+		}
+
+		app := &app{configPath: *configPath, libraryOverride: *libraryDir}
+		defer app.close()
+
+		if err := runTUI(rootCtx, app); err != nil {
+			fmt.Fprintf(os.Stderr, "shelf: %v\n", err)
+			return exitError
 		}
 		return exitOK
 	}
@@ -82,15 +104,10 @@ func run() int {
 		return exitUsage
 	}
 
-	// Ctrl-C cancels the context. Long operations check it and stop cleanly
-	// rather than being killed mid-write.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	app := &app{configPath: *configPath, libraryOverride: *libraryDir}
 	defer app.close()
 
-	err := cmd.run(ctx, app, args[1:])
+	err := cmd.run(rootCtx, app, args[1:])
 	switch {
 	case err == nil, errors.Is(err, errHelpShown):
 		return exitOK
@@ -155,8 +172,10 @@ Commands:
 Global flags:
   --config PATH    path to config.toml
   --library PATH   library root, overriding the config file
+  --no-tui         never launch the terminal interface
   --help           show this help
 
+Run 'shelf' with no command to open the terminal interface.
 Run 'shelf <command> --help' for command-specific flags.
 `)
 }

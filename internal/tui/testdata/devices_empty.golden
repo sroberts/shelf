@@ -1,0 +1,6 @@
+shelf    Library    Devices    Sync
+
+ No devices configured or discovered.
+ no devices configured — add a [[device]] block to config.toml, or press r to discover
+
+ k/↑ up • j/↓ down • / filter • space toggle selection • s sync selection • tab next screen • ? help • q quit

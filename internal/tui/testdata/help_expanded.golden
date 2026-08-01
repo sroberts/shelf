@@ -1,0 +1,17 @@
+shelf    Library    Devices    Sync
+
+ / to filter
+    TITLE                                      AUTHOR                  SERIES                  SIZE
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
+ ·  A Wizard of Earthsea                       Ursula K. Le Guin       Earthsea #1           1.3 KB
+ ·  Moby-Dick                                  Herman Melville                              23.7 MB
+ ·  The Exceedingly Long Title That Will Cert… Verbose, A.                                   4.0 KB
+ ·  海辺のカフカ                               村上 春樹                                     1.1 MB
+ 4 books — space to select, s to sync, / to filter
+
+ k/↑    up           tab  next screen    space toggle selection    s     sync selection     ? help
+ j/↓    down         ⇧tab prev screen    v     visual select       S     sync everything    q quit
+ g      top          1    library        a     select all          r     refresh
+ G      bottom       2    devices        A     clear selection     enter confirm
+ ctrl+u page up      3    sync           /     filter              esc   cancel
+ ctrl+d page down

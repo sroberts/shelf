@@ -1,0 +1,18 @@
+# Build output
+/shelf
+/dist/
+*.exe
+
+# Go
+*.test
+*.out
+/vendor/
+
+# Local scratch
+/tmp/
+*.db
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store

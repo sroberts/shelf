@@ -1,0 +1,9 @@
+{
+    "version": "1.4.1",
+    "ip": "192.168.1.42",
+    "mode": "STA",
+    "rssi": -90,
+    "freeHeap": 87072,
+    "uptime": 119,
+    "device": "X4"
+}

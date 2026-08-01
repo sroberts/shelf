@@ -1,0 +1,20 @@
+[
+    {
+        "name": "Franz Kafka",
+        "size": 0,
+        "isDirectory": true,
+        "isEpub": false
+    },
+    {
+        "name": "Herman Melville",
+        "size": 0,
+        "isDirectory": true,
+        "isEpub": false
+    },
+    {
+        "name": "\u6751\u4e0a \u6625\u6a39",
+        "size": 0,
+        "isDirectory": true,
+        "isEpub": false
+    }
+]

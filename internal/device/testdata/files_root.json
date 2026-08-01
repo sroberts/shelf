@@ -1,0 +1,68 @@
+[
+    {
+        "name": "the-time-machine.epub",
+        "size": 24835597,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "treasure-island.epub",
+        "size": 783876,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "the-jungle-book.epub",
+        "size": 477535,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "gullivers-travels.epub",
+        "size": 379421,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "the-art-of-war.epub",
+        "size": 454805,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "heart-of-darkness.epub",
+        "size": 213234,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "war-and-peace.epub",
+        "size": 84580075,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "the-odyssey.epub",
+        "size": 196136,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "frankenstein.epub",
+        "size": 316774,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "dracula.epub",
+        "size": 363076,
+        "isDirectory": false,
+        "isEpub": true
+    },
+    {
+        "name": "moby-dick.epub",
+        "size": 1130040,
+        "isDirectory": false,
+        "isEpub": true
+    }
+]

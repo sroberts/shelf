@@ -38,6 +38,7 @@ func commands() []*command {
 		cmdMeta,
 		cmdShelf,
 		cmdImport,
+		cmdConvert,
 		cmdTags,
 		cmdDevices,
 		cmdSync,

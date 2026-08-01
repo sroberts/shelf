@@ -47,6 +47,7 @@ back the other way; the device is a dumb, path-stable target.
 - `internal/epub` — parse and rewrite EPUB metadata in place. Read-lenient, write-conservative.
 - `internal/library` — SQLite index, scan, search, shelves, import, naming templates.
 - `internal/device` — HTTP client, discovery, WebSocket upload, firmware gating.
+- `internal/convert` — PDF/TXT to EPUB via external converters, cached and quality-assessed.
 - `internal/sync` — manifest, planner, executor.
 - `internal/tui` — Bubble Tea frontend over the same internal API the CLI uses.
 - `cmd/shelf` — flag parsing and dispatch. Bare `shelf` opens the TUI.
@@ -125,6 +126,7 @@ color depends on terminal detection and would fail in CI for reasons unrelated t
 
 ## Not built yet
 
-PDF/TXT conversion, EPUB optimization, KOReader progress sync, the SD-card transport, WebDAV, and
-mDNS discovery are all designed in `spec.md` but unimplemented. The spec's Settings screen is
+EPUB optimization, KOReader progress sync, the SD-card transport, WebDAV, and
+mDNS discovery are all designed in `spec.md` but unimplemented. Conversion is wired to
+`shelf convert` but not yet into `sync`, so PDFs are still skipped on the way to a device. The spec's Settings screen is
 blocked upstream by the firmware crash above.

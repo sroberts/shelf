@@ -139,6 +139,7 @@ const epub2OPF = `<?xml version="1.0" encoding="UTF-8"?>
     <meta name="cover" content="cover-img"/>
   </metadata>
   <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="cover-img" href="cover.jpeg" media-type="image/png"/>
     <item id="ch1" href="ch1.html" media-type="application/xhtml+xml"/>
   </manifest>
@@ -146,6 +147,33 @@ const epub2OPF = `<?xml version="1.0" encoding="UTF-8"?>
     <itemref idref="ch1"/>
   </spine>
 </package>`
+
+// Content documents carry a <head> with a <title> because XHTML requires it.
+// These fixtures are the input to Write, so anything invalid here shows up as a
+// validation failure that looks like the writer's fault. Keep them valid.
+const ch1XHTML = `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter 1</title></head><body><p>There was a boy.</p></body></html>`
+
+const ch1HTML = `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter 1</title></head><body><p>Anarres.</p></body></html>`
+
+// navXHTML needs exactly one epub:type="toc" nav, which is why the epub
+// namespace is declared here and not in the other content documents.
+const navXHTML = `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><ol><li><a href="ch1.xhtml">Chapter 1</a></li></ol></nav></body></html>`
+
+// tocNCX is the EPUB 2 navigation document. dtb:uid must match the package's
+// unique-identifier or epubcheck reports a mismatch.
+const tocNCX = `<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8"/>
+  </head>
+  <docTitle><text>The Dispossessed</text></docTitle>
+  <navMap>
+    <navPoint id="navpoint-1" playOrder="1">
+      <navLabel><text>Chapter 1</text></navLabel>
+      <content src="ch1.html"/>
+    </navPoint>
+  </navMap>
+</ncx>`
 
 // pngBytes renders a solid-color PNG of the given size.
 func pngBytes(t *testing.T, w, h int) []byte {
@@ -170,8 +198,8 @@ func epub3(t *testing.T) *builder {
 		addString(containerPath, containerXML).
 		addString("OEBPS/content.opf", epub3OPF).
 		add("OEBPS/images/cover.png", pngBytes(t, 600, 900)).
-		addString("OEBPS/nav.xhtml", `<html xmlns="http://www.w3.org/1999/xhtml"><body><nav/></body></html>`).
-		addString("OEBPS/ch1.xhtml", `<html xmlns="http://www.w3.org/1999/xhtml"><body><p>There was a boy.</p></body></html>`)
+		addString("OEBPS/nav.xhtml", navXHTML).
+		addString("OEBPS/ch1.xhtml", ch1XHTML)
 }
 
 // epub2 builds a complete, valid EPUB 2 test book.
@@ -180,8 +208,12 @@ func epub2(t *testing.T) *builder {
 	return newBuilder().
 		addString(containerPath, containerXML).
 		addString("OEBPS/content.opf", epub2OPF).
+		addString("OEBPS/toc.ncx", tocNCX).
+		// PNG bytes behind a .jpeg extension, deliberately: real EPUB 2 files do
+		// this and the manifest media-type is authoritative. epubcheck reports
+		// PKG-022 for it, which is a warning, not an error.
 		add("OEBPS/cover.jpeg", pngBytes(t, 400, 600)).
-		addString("OEBPS/ch1.html", `<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Anarres.</p></body></html>`)
+		addString("OEBPS/ch1.html", ch1HTML)
 }
 
 func strptr(s string) *string   { return &s }

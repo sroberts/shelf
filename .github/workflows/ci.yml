@@ -24,6 +24,35 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # epubcheck is the only independent validator of what internal/epub
+      # writes. internal/epub skips its epubcheck test when the binary is
+      # absent, so without this step the whole check silently no-ops in CI and a
+      # writer regression reaches main unnoticed. Pinned so a new epubcheck
+      # release cannot turn the build red on its own schedule.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install epubcheck
+        env:
+          EPUBCHECK_VERSION: 5.3.0
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/epubcheck.zip \
+            "https://github.com/w3c/epubcheck/releases/download/v${EPUBCHECK_VERSION}/epubcheck-${EPUBCHECK_VERSION}.zip"
+          unzip -q /tmp/epubcheck.zip -d "$HOME/.epubcheck"
+          # The release ships a jar, but the test shells out to `epubcheck`.
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec java -jar "%s/epubcheck-%s/epubcheck.jar" "$@"\n' \
+            "$HOME/.epubcheck" "$EPUBCHECK_VERSION" > "$HOME/.local/bin/epubcheck"
+          chmod +x "$HOME/.local/bin/epubcheck"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Fail loudly here rather than letting the epub test quietly skip.
+      - name: Verify epubcheck is on PATH
+        run: epubcheck --version
+
       - name: Verify formatting
         run: |
           unformatted="$(gofmt -l .)"

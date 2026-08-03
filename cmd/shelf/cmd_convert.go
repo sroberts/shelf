@@ -208,6 +208,14 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close()
 
+	// os.CreateTemp makes a 0600 file. Carrying the source's mode across keeps
+	// a derived artifact no less readable than the book it came from, which
+	// matters because these land in the user's library.
+	mode := os.FileMode(0o644)
+	if fi, err := in.Stat(); err == nil {
+		mode = fi.Mode().Perm()
+	}
+
 	tmp, err := os.CreateTemp(filepath.Dir(dst), ".shelf-out-*")
 	if err != nil {
 		return err
@@ -225,6 +233,10 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Chmod(name, mode); err != nil {
 		os.Remove(name)
 		return err
 	}

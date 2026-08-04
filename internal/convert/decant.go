@@ -64,16 +64,27 @@ func decantVersion() string {
 	return decantPinnedVersion
 }
 
+// builtins maps a preset name to its compiled-in implementation.
+//
+// A registry rather than a switch so tests can install a converter with
+// controllable behaviour — one that writes nothing, or fails, or succeeds
+// instantly — and exercise Convert's contract without a real PDF and without
+// shelling out to anything. Registered at init so the zero value is never
+// observed.
+var builtins = map[string]func(ctx context.Context, src, dst string) (string, error){
+	"decant": runDecant,
+}
+
 // runBuiltin dispatches to the compiled-in converter named by the preset.
 //
-// It mirrors runCommand's contract so Convert's flow is identical either way:
-// return a diagnostic string and an error, and leave the output at dst.
+// The contract: return a diagnostic string and an error, and leave the output
+// at dst.
 func runBuiltin(ctx context.Context, p Preset, src, dst string) (string, error) {
-	switch p.Name {
-	case "decant":
-		return runDecant(ctx, src, dst)
+	run, ok := builtins[p.Name]
+	if !ok {
+		return "", fmt.Errorf("%w: no built-in converter named %q", ErrUnsupported, p.Name)
 	}
-	return "", fmt.Errorf("%w: no built-in converter named %q", ErrUnsupported, p.Name)
+	return run(ctx, src, dst)
 }
 
 // runDecant converts a PDF to EPUB in process.

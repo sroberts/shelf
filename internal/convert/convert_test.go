@@ -14,21 +14,38 @@ import (
 	"time"
 )
 
-// Tests build converters directly rather than going through New(), so the
-// package can be tested without any external converter installed. The real
-// binaries are exercised by the end-to-end CLI run, not here.
+// Tests register a built-in converter with controllable behaviour rather than
+// using the real one, so Convert's contract can be exercised without a real PDF
+// and without depending on anything outside this binary. The real converter is
+// covered in decant_test.go.
 
-// shellPreset builds a preset that runs a shell snippet. {in} and {out} are
-// substituted before exec, as with a real converter.
-func shellPreset(name, script string, formats ...string) Preset {
+// fakeConverter registers a built-in with the given behaviour and returns a
+// Converter bound to it.
+func fakeConverter(t *testing.T, name string,
+	run func(ctx context.Context, src, dst string) (string, error), formats ...string) *Converter {
+	t.Helper()
 	if len(formats) == 0 {
 		formats = []string{"pdf", "txt"}
 	}
-	return Preset{
-		Name:    name,
-		Bin:     "/bin/sh",
-		Args:    []string{"-c", script},
-		Formats: formats,
+	registerBuiltin(t, name, run)
+	return &Converter{
+		Preset:  Preset{Name: name, Formats: formats},
+		Timeout: 30 * time.Second,
+	}
+}
+
+// writesEPUB returns a converter body that emits a fixed, readable EPUB.
+func writesEPUB(t *testing.T, dir string) func(context.Context, string, string) (string, error) {
+	t.Helper()
+	built := filepath.Join(dir, "built.epub")
+	minimalEPUB(t, built, []string{strings.Repeat("Call me Ishmael. ", 100)}, 0, 0)
+
+	return func(_ context.Context, _, dst string) (string, error) {
+		data, err := os.ReadFile(built)
+		if err != nil {
+			return "", err
+		}
+		return "", os.WriteFile(dst, data, 0o644)
 	}
 }
 
@@ -102,14 +119,7 @@ func TestConvertSuccess(t *testing.T) {
 	src := writeSource(t, dir, "book.pdf")
 	dst := filepath.Join(dir, "out.epub")
 
-	// A converter that produces a real EPUB with plenty of text.
-	prose := strings.Repeat("Call me Ishmael. ", 100)
-	built := filepath.Join(dir, "built.epub")
-	minimalEPUB(t, built, []string{prose, prose}, 0, 0)
-
-	conv := testConverter(shellPreset("fake", "cp '"+built+"' \"$2\"", "pdf"), 0)
-	// The shell snippet needs the args positionally.
-	conv.Preset.Args = []string{"-c", `cp "` + built + `" "$1"`, "sh", "{out}"}
+	conv := fakeConverter(t, "ok", writesEPUB(t, dir), "pdf")
 
 	res, err := conv.Convert(context.Background(), src, dst, Options{})
 	if err != nil {
@@ -129,46 +139,50 @@ func TestConvertSuccess(t *testing.T) {
 	}
 }
 
-// A converter that exits zero having written nothing is a failure, whatever it
-// claims — a zero-byte EPUB on the device is worse than an error here.
 func TestConvertEmptyOutputIsFailure(t *testing.T) {
 	dir := t.TempDir()
 	src := writeSource(t, dir, "book.pdf")
 
-	conv := testConverter(shellPreset("noop", "exit 0", "pdf"), 0)
+	conv := fakeConverter(t, "writes-nothing",
+		func(context.Context, string, string) (string, error) { return "", nil }, "pdf")
+
 	_, err := conv.Convert(context.Background(), src, filepath.Join(dir, "out.epub"), Options{})
 	if !errors.Is(err, ErrEmptyOutput) {
 		t.Errorf("err = %v, want ErrEmptyOutput", err)
 	}
 }
 
-func TestConvertFailureIncludesStderrTail(t *testing.T) {
+// The converter's own explanation is the only useful diagnostic a user gets,
+// so it must reach the caller intact rather than being flattened into a
+// generic "conversion failed".
+func TestConverterErrorReachesTheCaller(t *testing.T) {
 	dir := t.TempDir()
 	src := writeSource(t, dir, "book.pdf")
 
-	conv := testConverter(shellPreset("failing",
-		`echo "something went wrong on page 42" >&2; exit 3`, "pdf"), 0)
+	conv := fakeConverter(t, "explains-itself",
+		func(context.Context, string, string) (string, error) {
+			return "", fmt.Errorf("%w: no text layer on page 42", ErrNoTextLayer)
+		}, "pdf")
 
 	_, err := conv.Convert(context.Background(), src, filepath.Join(dir, "out.epub"), Options{})
-	if !errors.Is(err, ErrConversionFailed) {
-		t.Fatalf("err = %v, want ErrConversionFailed", err)
+	if !errors.Is(err, ErrNoTextLayer) {
+		t.Fatalf("err = %v, want it to wrap ErrNoTextLayer", err)
 	}
-	// The converter's own message is the only useful diagnostic; it must survive.
 	if !strings.Contains(err.Error(), "page 42") {
-		t.Errorf("error lost the converter's output: %v", err)
+		t.Errorf("error lost the converter's detail: %v", err)
 	}
 }
 
-// A failed conversion must not leave a partial EPUB behind, or a later scan
-// would index it as a real book.
 func TestFailedConversionLeavesNoOutput(t *testing.T) {
 	dir := t.TempDir()
 	src := writeSource(t, dir, "book.pdf")
 	dst := filepath.Join(dir, "out.epub")
 
-	conv := testConverter(shellPreset("partial",
-		`printf 'half a fi' > "$1"; exit 1`, "pdf"), 0)
-	conv.Preset.Args = []string{"-c", `printf 'half a file' > "$1"; exit 1`, "sh", "{out}"}
+	conv := fakeConverter(t, "writes-then-fails",
+		func(_ context.Context, _, dst string) (string, error) {
+			os.WriteFile(dst, []byte("half a file"), 0o644)
+			return "", errors.New("gave up partway")
+		}, "pdf")
 
 	if _, err := conv.Convert(context.Background(), src, dst, Options{}); err == nil {
 		t.Fatal("expected failure")
@@ -185,32 +199,23 @@ func TestFailedConversionLeavesNoOutput(t *testing.T) {
 	}
 }
 
-// A hung converter must be killed, and must not outlive the call.
-func TestConvertTimeoutKillsConverter(t *testing.T) {
+func TestConvertTimeout(t *testing.T) {
 	dir := t.TempDir()
 	src := writeSource(t, dir, "book.pdf")
 
-	marker := filepath.Join(dir, "still-running")
-	// Sleeps well past the timeout, then would touch a marker file. If the
-	// process survives the kill, the marker appears.
-	conv := testConverter(shellPreset("hang",
-		`sleep 5; touch "`+marker+`"`, "pdf"), 400*time.Millisecond)
+	conv := fakeConverter(t, "hangs", func(ctx context.Context, _, _ string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}, "pdf")
+	conv.Timeout = 300 * time.Millisecond
 
 	start := time.Now()
 	_, err := conv.Convert(context.Background(), src, filepath.Join(dir, "out.epub"), Options{})
-	elapsed := time.Since(start)
-
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
-	if elapsed > 4*time.Second {
-		t.Errorf("took %v; the converter was not killed promptly", elapsed)
-	}
-
-	// Give any surviving process time to write the marker.
-	time.Sleep(1500 * time.Millisecond)
-	if _, err := os.Stat(marker); err == nil {
-		t.Error("the converter outlived the timeout; the process group was not killed")
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("took %v; the timeout did not fire promptly", elapsed)
 	}
 }
 
@@ -219,16 +224,18 @@ func TestConvertRespectsCancellation(t *testing.T) {
 	src := writeSource(t, dir, "book.pdf")
 
 	ctx, cancel := context.WithCancel(context.Background())
+	conv := fakeConverter(t, "slow", func(ctx context.Context, _, _ string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}, "pdf")
+
 	go func() {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		cancel()
 	}()
 
-	conv := testConverter(shellPreset("slow", "sleep 10", "pdf"), 30*time.Second)
 	start := time.Now()
-	_, err := conv.Convert(ctx, src, filepath.Join(dir, "out.epub"), Options{})
-
-	if err == nil {
+	if _, err := conv.Convert(ctx, src, filepath.Join(dir, "out.epub"), Options{}); err == nil {
 		t.Fatal("expected an error on cancellation")
 	}
 	if time.Since(start) > 5*time.Second {
@@ -236,9 +243,29 @@ func TestConvertRespectsCancellation(t *testing.T) {
 	}
 }
 
-// Arguments are passed to exec directly, never through a shell, so a filename
-// containing shell metacharacters cannot become an injection.
-func TestFilenamesAreNotShellInterpreted(t *testing.T) {
+func TestConversionNeedsNothingOnPATH(t *testing.T) {
+	// The reason the old shell-injection test is gone: there is no shell, no
+	// argv, and no PATH lookup left to attack. Emptying PATH proves it — a
+	// conversion that still succeeds cannot have executed anything.
+	t.Setenv("PATH", "")
+
+	dir := t.TempDir()
+	src := writeSource(t, dir, "book.pdf")
+	dst := filepath.Join(dir, "out.epub")
+
+	conv := fakeConverter(t, "no-path", writesEPUB(t, dir), "pdf")
+
+	if _, err := conv.Convert(context.Background(), src, dst, Options{}); err != nil {
+		t.Fatalf("conversion needed something on PATH: %v", err)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("no output: %v", err)
+	}
+}
+
+// A filename full of shell metacharacters is just a filename now. Kept as a
+// regression guard in case a subprocess ever comes back.
+func TestHostileFilenamesAreHarmless(t *testing.T) {
 	dir := t.TempDir()
 
 	canary := filepath.Join(dir, "pwned")
@@ -247,35 +274,26 @@ func TestFilenamesAreNotShellInterpreted(t *testing.T) {
 		t.Skipf("filesystem rejected the hostile filename: %v", err)
 	}
 
-	built := filepath.Join(dir, "built.epub")
-	minimalEPUB(t, built, []string{strings.Repeat("text ", 200)}, 0, 0)
-
-	conv := testConverter(Preset{
-		Name: "fake", Bin: "/bin/sh",
-		Args:    []string{"-c", `cp "` + built + `" "$1"`, "sh", "{out}"},
-		Formats: []string{"pdf"},
-	}, 0)
-
-	// The input path is not even referenced by this converter; what matters is
-	// that building the args cannot execute anything.
-	_, err := conv.Convert(context.Background(), nasty, filepath.Join(dir, "out.epub"), Options{})
-	if err != nil {
+	conv := fakeConverter(t, "hostile", writesEPUB(t, dir), "pdf")
+	if _, err := conv.Convert(context.Background(), nasty, filepath.Join(dir, "out.epub"), Options{}); err != nil {
 		t.Logf("conversion error (acceptable): %v", err)
 	}
 	if _, err := os.Stat(canary); err == nil {
-		t.Fatal("a filename was interpreted by a shell; command injection is possible")
+		t.Fatal("a filename was interpreted by a shell")
 	}
 }
 
 func TestSupports(t *testing.T) {
-	conv := testConverter(Presets["ebook-convert"], 0)
+	conv := testConverter(Presets[DefaultPreset], 0)
 
-	for _, ext := range []string{".pdf", "pdf", ".PDF", ".txt"} {
+	for _, ext := range []string{".pdf", "pdf", ".PDF"} {
 		if !conv.Supports(ext) {
 			t.Errorf("Supports(%q) = false", ext)
 		}
 	}
-	for _, ext := range []string{".epub", ".xyz", ""} {
+	// Formats the device renders itself are deliberately not supported: there
+	// is nothing to convert.
+	for _, ext := range []string{".epub", ".txt", ".xyz", ""} {
 		if conv.Supports(ext) {
 			t.Errorf("Supports(%q) = true", ext)
 		}
@@ -286,25 +304,11 @@ func TestConvertRejectsUnsupportedFormat(t *testing.T) {
 	dir := t.TempDir()
 	src := writeSource(t, dir, "book.xyz")
 
-	conv := testConverter(shellPreset("fake", "exit 0", "pdf"), 0)
+	conv := fakeConverter(t, "pdf-only",
+		func(context.Context, string, string) (string, error) { return "", nil }, "pdf")
 	_, err := conv.Convert(context.Background(), src, filepath.Join(dir, "out.epub"), Options{})
 	if !errors.Is(err, ErrUnsupported) {
 		t.Errorf("err = %v, want ErrUnsupported", err)
-	}
-}
-
-func TestNewReportsMissingBinaryWithInstallHint(t *testing.T) {
-	Presets["test-absent"] = Preset{
-		Name: "test-absent", Bin: "definitely-not-installed-xyzzy", Formats: []string{"pdf"},
-	}
-	defer delete(Presets, "test-absent")
-
-	_, err := New("test-absent", 0)
-	if !errors.Is(err, ErrConverterMissing) {
-		t.Fatalf("err = %v, want ErrConverterMissing", err)
-	}
-	if !strings.Contains(err.Error(), "PATH") {
-		t.Errorf("error should say the binary is not on PATH: %v", err)
 	}
 }
 
@@ -314,7 +318,7 @@ func TestNewRejectsUnknownPreset(t *testing.T) {
 		t.Errorf("err = %v, want ErrUnsupported", err)
 	}
 	// The message should list what is available.
-	if !strings.Contains(err.Error(), "ebook-convert") {
+	if !strings.Contains(err.Error(), DefaultPreset) {
 		t.Errorf("error should list known converters: %v", err)
 	}
 }

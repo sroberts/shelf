@@ -149,8 +149,11 @@ text-layer PDF and ships a `crosspoint` profile whose numbers come from reading 
 pure Go, so the static-binary and cross-compile invariants hold. This is the answer to the
 dependency question in `spec.md` 14.6 — the best PDF path is no longer a Calibre component.
 
-- `decant` is the default and reads PDF only. `NewForFile` falls back to `ebook-convert`, then
-  `pandoc`, for the formats it does not read. An explicit `--converter` is honored strictly.
+- **Conversion shells out to nothing.** `decant` is compiled in and reads PDF, which is the only
+  format that needs converting: shelf indexes epub, txt, xtc, and pdf, and the firmware renders
+  the first three directly. There is no PATH lookup, no subprocess, and no fallback chain. A test
+  asserts every preset has a compiled-in implementation, and another runs a conversion with `PATH`
+  emptied — reintroducing a subprocess would fail both.
 - decant's module version is folded into the cache key, so upgrading it re-converts rather than
   serving artifacts the old version produced. `decantPinnedVersion` must track `go.mod`; a test
   enforces this, because a `go test` binary's build info carries no dependency list.

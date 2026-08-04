@@ -79,23 +79,23 @@ func TestBuiltinConverterNeedsNothingInstalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New(decant) with an empty PATH failed: %v", err)
 	}
-	if !conv.Preset.Builtin {
-		t.Error("decant preset is not marked Builtin")
-	}
 	if !conv.Supports(".pdf") {
 		t.Error("decant does not claim to support .pdf")
 	}
 }
 
-func TestDefaultPresetIsBuiltin(t *testing.T) {
-	// A default that needs an external install is a default that fails on a
-	// fresh machine.
-	p, ok := Presets[DefaultPreset]
-	if !ok {
+// Every preset must be compiled in. A converter that needs an external install
+// is one that fails on a fresh machine, and reintroducing one would quietly
+// undo the reason the subprocess path was removed.
+func TestEveryPresetIsCompiledIn(t *testing.T) {
+	if _, ok := Presets[DefaultPreset]; !ok {
 		t.Fatalf("DefaultPreset %q is not in Presets", DefaultPreset)
 	}
-	if !p.Builtin {
-		t.Errorf("DefaultPreset %q is not built in", DefaultPreset)
+	for name := range Presets {
+		if _, ok := builtins[name]; !ok {
+			t.Errorf("preset %q has no compiled-in implementation; "+
+				"if it shells out, the no-PATH guarantee is broken", name)
+		}
 	}
 }
 
@@ -353,37 +353,19 @@ func TestNewForFileUsesTheBuiltinForPDF(t *testing.T) {
 	}
 }
 
-func TestNewForFileFallsBackForFormatsTheDefaultRejects(t *testing.T) {
-	// The default converter reads PDF only. A TXT must not fail just because
-	// the configured name does not accept it.
-	if _, err := New("ebook-convert", 0); err != nil {
-		t.Skip("no fallback converter installed; skipping")
-	}
-
-	conv, err := NewForFile(DefaultPreset, "somewhere/notes.txt", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if conv.Preset.Name == "decant" {
-		t.Error("resolved the PDF-only built-in for a .txt")
-	}
-	if !conv.Supports(".txt") {
-		t.Errorf("resolved %q, which does not accept .txt", conv.Preset.Name)
-	}
-}
-
-func TestNewForFileReportsWhatIsMissing(t *testing.T) {
-	// With nothing installed, a TXT cannot be converted. The error should say
-	// that a converter is missing, not that the format is unsupported —
-	// pandoc would handle it fine if it were there.
-	t.Setenv("PATH", "")
-
+// A TXT has no converter, and that is correct rather than a gap: the firmware
+// renders TXT directly, so converting one would be pointless work. The error
+// has to say that, because "unsupported" alone reads like a missing feature.
+func TestNewForFileExplainsFormatsTheDeviceRendersItself(t *testing.T) {
 	_, err := NewForFile(DefaultPreset, "somewhere/notes.txt", 0)
 	if err == nil {
-		t.Fatal("resolving a .txt with an empty PATH succeeded")
+		t.Fatal("resolving a .txt returned a converter; nothing converts TXT")
 	}
-	if !errors.Is(err, ErrConverterMissing) {
-		t.Errorf("err = %v, want ErrConverterMissing", err)
+	if !errors.Is(err, ErrUnsupported) {
+		t.Errorf("err = %v, want ErrUnsupported", err)
+	}
+	if !strings.Contains(err.Error(), "reads .txt directly") {
+		t.Errorf("error should explain that the device renders TXT itself: %v", err)
 	}
 }
 

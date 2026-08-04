@@ -2,6 +2,7 @@ package convert
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,22 @@ import (
 	"time"
 )
 
-// cacheConverter builds a converter that copies a prepared EPUB and records how
+// registerBuiltin installs a compiled-in converter for the duration of a test.
+//
+// Cache behaviour needs a converter whose runs are countable and whose output
+// is fixed. Before conversion moved in-process this was a shell snippet; now it
+// is a Go function, which is both faster and one less reason for the test suite
+// to depend on anything outside the binary.
+func registerBuiltin(t *testing.T, name string, run func(ctx context.Context, src, dst string) (string, error)) {
+	t.Helper()
+	if _, exists := builtins[name]; exists {
+		t.Fatalf("built-in %q already registered", name)
+	}
+	builtins[name] = run
+	t.Cleanup(func() { delete(builtins, name) })
+}
+
+// cacheConverter builds a converter that copies a prepared EPUB and counts how
 // many times it actually ran, so cache hits are observable.
 func cacheConverter(t *testing.T, dir string, runs *int) *Converter {
 	t.Helper()
@@ -17,29 +33,24 @@ func cacheConverter(t *testing.T, dir string, runs *int) *Converter {
 	built := filepath.Join(dir, "built.epub")
 	minimalEPUB(t, built, []string{strings.Repeat("Call me Ishmael. ", 100)}, 0, 0)
 
-	counter := filepath.Join(dir, "runs")
-	_ = runs // counted by reading the file below
+	name := "counting"
+	registerBuiltin(t, name, func(_ context.Context, _, dst string) (string, error) {
+		*runs++
+		data, err := os.ReadFile(built)
+		if err != nil {
+			return "", err
+		}
+		return "", os.WriteFile(dst, data, 0o644)
+	})
 
 	return &Converter{
 		Preset: Preset{
-			Name: "counting",
-			Bin:  "/bin/sh",
-			Args: []string{"-c",
-				`echo x >> "` + counter + `"; cp "` + built + `" "$1"`, "sh", "{out}"},
+			Name:    name,
+			Args:    []string{"--fixed"},
 			Formats: []string{"pdf"},
 		},
 		Timeout: 30 * time.Second,
 	}
-}
-
-// runCount reads how many times the counting converter executed.
-func runCount(t *testing.T, dir string) int {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, "runs"))
-	if err != nil {
-		return 0
-	}
-	return strings.Count(string(data), "x")
 }
 
 func TestCacheReusesConvertedArtifact(t *testing.T) {
@@ -63,8 +74,8 @@ func TestCacheReusesConvertedArtifact(t *testing.T) {
 	if entry.Assessment.Quality != QualityGood {
 		t.Errorf("assessment not stored: %+v", entry.Assessment)
 	}
-	if runCount(t, dir) != 1 {
-		t.Fatalf("converter ran %d times, want 1", runCount(t, dir))
+	if runs != 1 {
+		t.Fatalf("converter ran %d times, want 1", runs)
 	}
 
 	// Second call: same source, same converter. Must not re-run.
@@ -81,7 +92,7 @@ func TestCacheReusesConvertedArtifact(t *testing.T) {
 	if entry2.SourceSHA256 != entry.SourceSHA256 {
 		t.Error("cached entry does not match")
 	}
-	if n := runCount(t, dir); n != 1 {
+	if n := runs; n != 1 {
 		t.Errorf("converter ran %d times; a cache hit must not re-run it", n)
 	}
 }
@@ -110,17 +121,17 @@ func TestCacheMissesWhenSourceChanges(t *testing.T) {
 	if cached {
 		t.Error("a changed source must not hit the cache")
 	}
-	if n := runCount(t, dir); n != 2 {
+	if n := runs; n != 2 {
 		t.Errorf("converter ran %d times, want 2", n)
 	}
 }
 
-// The cache key folds in the converter's arguments, not just its name.
-// Changing --enable-heuristics changes the output, and reusing an artifact
-// produced under different settings would be wrong.
+// The cache key folds in the converter's settings, not just its name. Changing
+// a setting changes the output, and reusing an artifact produced under
+// different settings would be wrong.
 func TestCacheKeyDependsOnConverterArguments(t *testing.T) {
-	a := Preset{Name: "same", Bin: "x", Args: []string{"{in}", "{out}"}}
-	b := Preset{Name: "same", Bin: "x", Args: []string{"{in}", "{out}", "--enable-heuristics"}}
+	a := Preset{Name: "same", Args: []string{"--profile=crosspoint"}}
+	b := Preset{Name: "same", Args: []string{"--profile=crosspoint", "--keep-vectors"}}
 
 	if key("deadbeef", a) == key("deadbeef", b) {
 		t.Error("presets differing only in arguments share a cache key")
@@ -206,11 +217,11 @@ func TestFailedConversionIsNotCached(t *testing.T) {
 	dir := t.TempDir()
 	src := writeSource(t, dir, "book.pdf")
 
+	registerBuiltin(t, "failing", func(context.Context, string, string) (string, error) {
+		return "", errors.New("converter refused this book")
+	})
 	conv := &Converter{
-		Preset: Preset{
-			Name: "failing", Bin: "/bin/sh",
-			Args: []string{"-c", "exit 1"}, Formats: []string{"pdf"},
-		},
+		Preset:  Preset{Name: "failing", Formats: []string{"pdf"}},
 		Timeout: 10 * time.Second,
 	}
 	cache := NewCache(filepath.Join(dir, "cache"))

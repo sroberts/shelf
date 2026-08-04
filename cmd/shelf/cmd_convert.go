@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -199,18 +198,18 @@ func report(src, dst string, a convert.Assessment, dur time.Duration, size int64
 }
 
 func listConverters() error {
+	// Every converter is compiled in, so there is no availability to report and
+	// nothing to install. The version matters instead: it is part of the cache
+	// key, so an upgrade re-converts rather than serving older output.
 	for _, name := range convert.PresetNames() {
 		p := convert.Presets[name]
 
-		status := "not installed"
-		if _, err := convert.New(name, 0); err == nil {
-			status = "available"
-		} else if !errors.Is(err, convert.ErrConverterMissing) {
-			status = err.Error()
+		version := p.Version
+		if version == "" {
+			version = "built-in"
 		}
-
-		fmt.Printf("%-16s %-14s %s\n", name, status, p.Notes)
-		fmt.Printf("%-16s %s\n", "", "formats: "+strings.Join(p.Formats, ", "))
+		fmt.Printf("%-10s %-10s %s\n", name, version, p.Notes)
+		fmt.Printf("%-10s %-10s %s\n", "", "", "formats: "+strings.Join(p.Formats, ", "))
 	}
 	return nil
 }

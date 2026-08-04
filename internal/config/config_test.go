@@ -115,7 +115,7 @@ optimize   = true
 profile    = "x4-v1"
 
 [convert]
-pdf = "ebook-convert"
+pdf = "decant"
 timeout = "10m"
 
 [sync]

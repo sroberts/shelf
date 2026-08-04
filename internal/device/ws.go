@@ -175,24 +175,30 @@ func (c *Client) uploadWS(ctx context.Context, dest Path, r io.Reader, size int6
 		return fmt.Errorf("%w: timed out waiting for READY", errWSUnavailable)
 	}
 
-	if err := c.sendChunks(ctx, conn, dest, r, size, opts, msgs, readErrs); err != nil {
+	finished, err := c.sendChunks(ctx, conn, dest, r, size, opts, msgs, readErrs)
+	if err != nil {
 		return err
+	}
+	if finished {
+		// The device already said DONE while the body was still streaming.
+		return nil
 	}
 	return waitForDone(ctx, dest, size, opts, msgs, readErrs)
 }
 
-// sendChunks streams the body, surfacing any device error as soon as it arrives.
+// sendChunks streams the body. It reports whether the device already returned
+// a final verdict, so the caller knows not to wait for one.
 func (c *Client) sendChunks(
 	ctx context.Context, conn *websocket.Conn, dest Path,
 	r io.Reader, size int64, opts UploadOptions,
 	msgs <-chan string, readErrs <-chan error,
-) error {
+) (done bool, err error) {
 	buf := make([]byte, opts.chunkSize())
 	var sent int64
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return false, err
 		}
 
 		// Surface a device error mid-transfer rather than sending the whole
@@ -200,13 +206,32 @@ func (c *Client) sendChunks(
 		select {
 		case msg := <-msgs:
 			if strings.HasPrefix(msg, "ERROR") {
-				return ParseDeviceError(msg)
+				return false, ParseDeviceError(msg)
+			}
+			if strings.HasPrefix(msg, "DONE") {
+				// The device finished before this loop noticed. That happens
+				// when it acknowledges the last chunk quickly, and it is
+				// success, not a short write.
+				report(opts, Progress{Path: dest, Sent: size, Total: size})
+				return true, nil
 			}
 			if p, ok := parseProgress(msg); ok {
 				report(opts, Progress{Path: dest, Sent: p.received, Total: p.total})
 			}
 		case err := <-readErrs:
-			return fmt.Errorf("connection lost after %d of %d bytes: %w", sent, size, err)
+			// A closed connection is only a failure if the device did not
+			// report success first. It sends DONE and then closes, so the
+			// close and the verdict arrive together; treating the close alone
+			// as failure would retry an upload that already completed, and on
+			// a slow link that means re-sending the whole book.
+			if devErr := drainForVerdict(msgs); devErr != nil {
+				if errors.Is(devErr, errDeviceDone) {
+					report(opts, Progress{Path: dest, Sent: size, Total: size})
+					return true, nil
+				}
+				return false, devErr
+			}
+			return false, fmt.Errorf("connection lost after %d of %d bytes: %w", sent, size, err)
 		default:
 		}
 
@@ -216,10 +241,14 @@ func (c *Client) sendChunks(
 				// The device reports a failure and then drops the connection,
 				// so a write error is usually the symptom rather than the
 				// cause. Give the real message a moment to arrive.
-				if devErr := drainForError(msgs); devErr != nil {
-					return devErr
+				if devErr := drainForVerdict(msgs); devErr != nil {
+					if errors.Is(devErr, errDeviceDone) {
+						report(opts, Progress{Path: dest, Sent: size, Total: size})
+						return true, nil
+					}
+					return false, devErr
 				}
-				return fmt.Errorf("send chunk at offset %d: %w", sent, err)
+				return false, fmt.Errorf("send chunk at offset %d: %w", sent, err)
 			}
 			sent += int64(n)
 		}
@@ -227,16 +256,16 @@ func (c *Client) sendChunks(
 			break
 		}
 		if readErr != nil {
-			return fmt.Errorf("read source at offset %d: %w", sent, readErr)
+			return false, fmt.Errorf("read source at offset %d: %w", sent, readErr)
 		}
 	}
 
 	if sent != size {
 		// The device validates against the size in the START frame and will
 		// reject a mismatch, so catch it here with a clearer message.
-		return fmt.Errorf("%w: declared %d bytes but sent %d", ErrInvalidStart, size, sent)
+		return false, fmt.Errorf("%w: declared %d bytes but sent %d", ErrInvalidStart, size, sent)
 	}
-	return nil
+	return false, nil
 }
 
 // waitForDone blocks until the device reports completion or failure.
@@ -276,7 +305,11 @@ func waitForDone(
 
 		case err := <-readErrs:
 			// Drain anything the reader delivered before failing.
-			if devErr := drainForError(msgs); devErr != nil {
+			if devErr := drainForVerdict(msgs); devErr != nil {
+				if errors.Is(devErr, errDeviceDone) {
+					report(opts, Progress{Path: dest, Sent: size, Total: size})
+					return nil
+				}
 				return devErr
 			}
 			return fmt.Errorf("connection lost before completion: %w", err)
@@ -311,12 +344,19 @@ func connectionLost(readErrs <-chan error) error {
 	}
 }
 
-// drainForError consumes buffered messages looking for a device verdict.
+// errDeviceDone reports that the device finished successfully. It travels as an
+// error only so drainForVerdict can return one value; callers translate it.
+var errDeviceDone = errors.New("device reported DONE")
+
+// drainForVerdict consumes buffered messages looking for the device's final
+// word, returning errDeviceDone for success and a typed error for failure.
 //
-// The device writes its ERROR frame and closes immediately, so the frame is
-// often already in the channel when the write or read failure surfaces.
-// Returning the device's own message is far more useful than "broken pipe".
-func drainForError(msgs <-chan string) error {
+// The device writes its last frame and closes immediately, so by the time a
+// write or read failure surfaces, the verdict is usually already sitting in the
+// channel. Reading it is the difference between reporting what the device
+// actually said and reporting "broken pipe" — and, for DONE, between accepting
+// a finished upload and re-sending the whole book.
+func drainForVerdict(msgs <-chan string) error {
 	deadline := time.After(250 * time.Millisecond)
 	for {
 		select {
@@ -326,6 +366,9 @@ func drainForError(msgs <-chan string) error {
 			}
 			if strings.HasPrefix(msg, "ERROR") {
 				return ParseDeviceError(msg)
+			}
+			if strings.HasPrefix(msg, "DONE") {
+				return errDeviceDone
 			}
 		case <-deadline:
 			return nil

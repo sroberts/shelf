@@ -104,9 +104,6 @@ func (p *wsPeer) handle(w http.ResponseWriter, r *http.Request) {
 	// client has a chance to read the verdict before the socket goes away.
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	p.enter()
-	defer p.leave()
-
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -134,6 +131,14 @@ func (p *wsPeer) handle(w http.ResponseWriter, r *http.Request) {
 	if err := conn.Write(ctx, websocket.MessageText, []byte("READY")); err != nil {
 		return
 	}
+
+	// Concurrency is counted from READY to the final verdict -- the window in
+	// which the device is actually committed to a transfer. Counting the whole
+	// HTTP handler instead would flag the overlap between one connection's
+	// graceful teardown and the next one's dial, which is not a client
+	// violation and made this test fail on slower runners.
+	p.enter()
+	defer p.leave()
 
 	total := parseStartSize(string(data))
 

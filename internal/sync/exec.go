@@ -248,11 +248,16 @@ func recordSuccess(m *Manifest, op Op) {
 	switch op.Kind {
 	case OpUpload:
 		m.Put(Entry{
-			SHA256:       op.SHA256,
-			DevicePath:   op.DevicePath.String(),
-			DeviceSize:   op.Size,
-			LocalPath:    op.LocalPath,
-			UploadedUnix: time.Now().Unix(),
+			SHA256:     op.SHA256,
+			DevicePath: op.DevicePath.String(),
+			DeviceSize: op.Size,
+			// The library source, not the derived artifact that supplied the
+			// bytes: the manifest is keyed by this, and a cache path changes
+			// whenever the converter or profile does.
+			LocalPath:       op.source(),
+			UploadedUnix:    time.Now().Unix(),
+			Optimized:       op.Optimized,
+			OptimizeProfile: op.OptimizeProfile,
 		})
 
 	case OpDelete:
@@ -262,11 +267,16 @@ func recordSuccess(m *Manifest, op Op) {
 		// The move is the only operation that changes a pinned path, and it
 		// only happens under an explicit --repath.
 		m.Put(Entry{
-			SHA256:       op.SHA256,
-			DevicePath:   op.DevicePath.String(),
-			DeviceSize:   op.Size,
-			LocalPath:    op.LocalPath,
-			UploadedUnix: time.Now().Unix(),
+			SHA256:     op.SHA256,
+			DevicePath: op.DevicePath.String(),
+			DeviceSize: op.Size,
+			// The library source, not the derived artifact that supplied the
+			// bytes: the manifest is keyed by this, and a cache path changes
+			// whenever the converter or profile does.
+			LocalPath:       op.source(),
+			UploadedUnix:    time.Now().Unix(),
+			Optimized:       op.Optimized,
+			OptimizeProfile: op.OptimizeProfile,
 		})
 	}
 }

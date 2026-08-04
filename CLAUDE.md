@@ -126,6 +126,23 @@ color depends on terminal detection and would fail in CI for reasons unrelated t
 
 ## Conversion and optimization
 
+`sync` prepares books before planning (`internal/sync/prepare.go`): PDFs are converted, EPUBs are
+optimized for the target panel, and each result is hashed. This runs *before* `Build` so
+`plan.go` stays a pure function. Two rules govern the output, and both exist to protect pinning:
+
+- **Identity is the library source.** `LocalBook.Path` and the manifest's `local_path` stay the
+  file on disk in the library, never the cache artifact. `LocalBook.UploadPath` carries the bytes.
+  Artifact paths move whenever the converter version or profile changes; if that path were the
+  identity, the planner would see a new book, upload it beside the old one, and orphan a pinned
+  file with someone's reading position in it.
+- **The hash describes the bytes actually sent.** That is what makes an unchanged profile produce
+  no churn and a changed one re-upload exactly the books it affected.
+
+Optimization applies only where the bytes are an EPUB. A TXT is rendered natively by the firmware
+and is not a zip, so running the optimizer over it fails to open the archive — and since a failed
+book is dropped rather than fatal, that silently stops every TXT from syncing.
+
+
 PDF conversion is **compiled in**, not shelled out to: `internal/convert` imports
 [decant](https://github.com/sroberts/decant), which reconstructs reflowable EPUB 3 from a
 text-layer PDF and ships a `crosspoint` profile whose numbers come from reading the firmware. It is
@@ -144,8 +161,8 @@ dependency question in `spec.md` 14.6 — the best PDF path is no longer a Calib
 ## Not built yet
 
 KOReader progress sync, the SD-card transport, WebDAV, and mDNS discovery are all designed in
-`spec.md` but unimplemented. Conversion and optimization are wired to `shelf convert` and
-`shelf optimize` but not yet into `sync`, so PDFs are still skipped on the way to a device. Font
-stripping is not implemented: dropping a font means removing its manifest item and every
-`@font-face` rule referencing it, and a partial job produces an EPUB `epubcheck` rejects. The
-spec's Settings screen is blocked upstream by the firmware crash above.
+`spec.md` but unimplemented. Font stripping is not implemented: dropping a font means removing its
+manifest item and every `@font-face` rule referencing it, and a partial job produces an EPUB
+`epubcheck` rejects. The TUI runs conversion inside its `tea.Cmd` with no progress shown, so a
+large PDF looks like a hang. The spec's Settings screen is blocked upstream by the firmware crash
+above.

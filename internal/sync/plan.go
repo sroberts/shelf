@@ -30,10 +30,25 @@ type Op struct {
 	From device.Path
 	// LocalPath is the file to read for an upload.
 	LocalPath string
-	Size      int64
-	SHA256    string
+	// SourcePath is the library file this book came from, which is what the
+	// manifest is keyed by. It differs from LocalPath only when the bytes
+	// being sent are a derived artifact. Empty means LocalPath.
+	SourcePath string
+	Size       int64
+	SHA256     string
+	// Optimized and OptimizeProfile are carried through to the manifest entry.
+	Optimized       bool
+	OptimizeProfile string
 	// Reason is shown in dry-run output.
 	Reason string
+}
+
+// source returns the manifest identity for this operation.
+func (o Op) source() string {
+	if o.SourcePath != "" {
+		return o.SourcePath
+	}
+	return o.LocalPath
 }
 
 // String renders an operation for display.
@@ -54,14 +69,43 @@ func (o Op) String() string {
 
 // LocalBook is one candidate for syncing.
 type LocalBook struct {
-	// Path is the local file.
+	// Path is the local file, and the book's identity in the manifest.
+	//
+	// For a converted or optimized book this stays the library source — the
+	// PDF on disk, not the derived artifact. The manifest is keyed by it, so
+	// it has to be stable across everything that can change the bytes: a
+	// decant upgrade or a profile bump moves the artifact to a new cache path,
+	// and if that path were the identity the planner would see a brand new
+	// book, upload it beside the old one, and orphan a pinned file.
 	Path string
-	// SHA256 is the hash of the bytes that will be sent.
+
+	// UploadPath is the file whose bytes are sent. Empty means Path.
+	//
+	// This is what splits identity from content: the derived artifact supplies
+	// the bytes, while Path continues to say which book they belong to.
+	UploadPath string
+
+	// SHA256 is the hash of the bytes that will be sent, and Size their size.
+	// After conversion or optimization neither describes the source file.
 	SHA256 string
 	Size   int64
+
 	// RelPath is the device-relative destination rendered from the naming
 	// template. It is used only for books that are not already pinned.
 	RelPath string
+
+	// Optimized records that the bytes were built for a device profile, and
+	// which one, so the manifest can say what produced them.
+	Optimized       bool
+	OptimizeProfile string
+}
+
+// upload returns the path to read bytes from.
+func (b LocalBook) upload() string {
+	if b.UploadPath != "" {
+		return b.UploadPath
+	}
+	return b.Path
 }
 
 // Options control planning policy.
@@ -183,13 +227,16 @@ func Build(in Input) Plan {
 					plan.RepathWarnings = append(plan.RepathWarnings,
 						fmt.Sprintf("%s -> %s (loses reading position)", dest, desired))
 					uploads = append(uploads, Op{
-						Kind:       OpMove,
-						From:       dest,
-						DevicePath: desired,
-						LocalPath:  book.Path,
-						Size:       book.Size,
-						SHA256:     book.SHA256,
-						Reason:     "repath requested",
+						Kind:            OpMove,
+						From:            dest,
+						DevicePath:      desired,
+						LocalPath:       book.upload(),
+						SourcePath:      book.Path,
+						Size:            book.Size,
+						SHA256:          book.SHA256,
+						Optimized:       book.Optimized,
+						OptimizeProfile: book.OptimizeProfile,
+						Reason:          "repath requested",
 					})
 					neededDirs[desired.Dir()] = true
 					claimed[desired] = true
@@ -331,12 +378,15 @@ func Build(in Input) Plan {
 // uploadOp builds an upload operation.
 func uploadOp(b LocalBook, dest device.Path, reason string) Op {
 	return Op{
-		Kind:       OpUpload,
-		DevicePath: dest,
-		LocalPath:  b.Path,
-		Size:       b.Size,
-		SHA256:     b.SHA256,
-		Reason:     reason,
+		Kind:            OpUpload,
+		DevicePath:      dest,
+		LocalPath:       b.upload(),
+		SourcePath:      b.Path,
+		Size:            b.Size,
+		SHA256:          b.SHA256,
+		Optimized:       b.Optimized,
+		OptimizeProfile: b.OptimizeProfile,
+		Reason:          reason,
 	}
 }
 

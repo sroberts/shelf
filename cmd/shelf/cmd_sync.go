@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sroberts/shelf/internal/config"
+	"github.com/sroberts/shelf/internal/convert"
 	"github.com/sroberts/shelf/internal/device"
 	"github.com/sroberts/shelf/internal/library"
 	syncpkg "github.com/sroberts/shelf/internal/sync"
@@ -96,10 +97,30 @@ var cmdSync = &command{
 			return err
 		}
 
-		local, err := localBooks(books, cfg.NamingTemplate)
+		candidates, err := syncCandidates(books, cfg.NamingTemplate)
 		if err != nil {
 			return err
 		}
+
+		prep, err := preparerFor(cfg, dev, status.Device)
+		if err != nil {
+			return err
+		}
+		if !*quiet {
+			fmt.Fprintf(os.Stderr, "preparing %d book(s)...\n", len(candidates))
+		}
+		prepared, err := prep.Prepare(ctx, candidates)
+		if err != nil {
+			return err
+		}
+		for _, note := range prepared.Notes {
+			fmt.Fprintf(os.Stderr, "  %s\n", note)
+		}
+		if prepared.Failed > 0 {
+			fmt.Fprintf(os.Stderr, "%d book(s) could not be prepared and will not be synced\n",
+				prepared.Failed)
+		}
+		local := prepared.Books
 
 		plan := syncpkg.Build(syncpkg.Input{
 			Root:     root,
@@ -188,40 +209,72 @@ func orAll(name string) string {
 	return name
 }
 
-// localBooks converts library books into planner input, rendering each one's
-// device-relative destination from the naming template.
+// syncCandidates renders each library book's device-relative destination from
+// the naming template.
 //
-// PDFs are skipped: the firmware has no PDF engine, so they are a source format
-// only until the conversion pipeline lands.
-func localBooks(books []*library.Book, template string) ([]syncpkg.LocalBook, error) {
-	out := make([]syncpkg.LocalBook, 0, len(books))
-	var skipped int
+// The extension is left off: what a book lands as depends on whether it gets
+// converted, and a PDF that becomes an EPUB must not be pinned at a .pdf path.
+func syncCandidates(books []*library.Book, template string) ([]syncpkg.Candidate, error) {
+	out := make([]syncpkg.Candidate, 0, len(books))
 
 	for _, b := range books {
-		if !b.Format.SyncableToDevice() {
-			skipped++
-			continue
-		}
-
 		rel, err := library.RenderTemplate(template, b)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", b.Path, err)
 		}
-		rel += strings.ToLower(filepath.Ext(b.Path))
 
-		out = append(out, syncpkg.LocalBook{
+		out = append(out, syncpkg.Candidate{
 			Path:    b.Path,
+			Format:  string(b.Format),
 			SHA256:  b.SHA256,
 			Size:    b.Size,
 			RelPath: rel,
 		})
 	}
-
-	if skipped > 0 {
-		fmt.Fprintf(os.Stderr,
-			"skipping %d book(s) the device cannot render; convert them first\n", skipped)
-	}
 	return out, nil
+}
+
+// preparerFor assembles the conversion and optimization pipeline for a device.
+//
+// The panel profile comes from the model the device reports rather than from
+// config alone, which is what spec.md 4 means by the status endpoint selecting
+// the profile. An explicit config value still wins: a user who names a profile
+// has a reason.
+func preparerFor(cfg *config.Config, dev config.Device, model string) (*syncpkg.Preparer, error) {
+	pc := syncpkg.PreparerConfig{
+		ConvertCacheDir: filepath.Join(cfg.Paths.Cache, "converted"),
+		OptimizedDir:    cfg.Paths.OptimizedDir(),
+		ConverterName:   cfg.Convert.PDF,
+		Timeout:         cfg.Convert.Timeout.Duration,
+		Optimize:        dev.Optimize,
+		Syncable: func(format string) bool {
+			return library.Format(format).SyncableToDevice()
+		},
+	}
+
+	if dev.Optimize {
+		profile, err := optimizeProfile(dev.Profile, model)
+		if err != nil {
+			return nil, err
+		}
+		pc.Profile = profile
+	}
+	return syncpkg.NewPreparer(pc), nil
+}
+
+// optimizeProfile resolves the optimization target for a device.
+func optimizeProfile(configured, model string) (convert.Profile, error) {
+	if configured != "" {
+		return convert.LookupProfile(configured)
+	}
+	if model != "" {
+		if p, err := convert.ProfileForModel(model); err == nil {
+			return p, nil
+		}
+	}
+	// An unrecognized model still gets the panel-independent wins rather than
+	// no optimization at all.
+	return convert.LookupProfile("generic-v1")
 }
 
 // printPlan shows what a sync would do.

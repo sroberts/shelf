@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/sroberts/shelf/internal/config"
+	"github.com/sroberts/shelf/internal/convert"
 	"github.com/sroberts/shelf/internal/device"
 	"github.com/sroberts/shelf/internal/library"
 	syncpkg "github.com/sroberts/shelf/internal/sync"
@@ -153,10 +154,21 @@ func (m syncModel) buildPlan(ctx context.Context, books []*library.Book) tea.Cmd
 			return errMsg{err}
 		}
 
-		local, err := toLocalBooks(books, cfg.NamingTemplate)
+		candidates, err := toCandidates(books, cfg.NamingTemplate)
 		if err != nil {
 			return errMsg{err}
 		}
+
+		// Conversion and optimization happen here, inside the tea.Cmd, for the
+		// same reason the device listing above does: this goroutine is not the
+		// Elm loop, so blocking is safe. A large PDF can take minutes and the
+		// view shows no progress while it runs, which is a gap worth closing
+		// once the executor's event channel is generalized to carry it.
+		prepared, err := prepareBooks(ctx, cfg, dev, status.Device, candidates)
+		if err != nil {
+			return errMsg{err}
+		}
+		local := prepared.Books
 
 		plan := syncpkg.Build(syncpkg.Input{
 			Root:     root,
@@ -170,25 +182,65 @@ func (m syncModel) buildPlan(ctx context.Context, books []*library.Book) tea.Cmd
 	}
 }
 
-// toLocalBooks renders each book's device-relative destination.
-func toLocalBooks(books []*library.Book, template string) ([]syncpkg.LocalBook, error) {
-	out := make([]syncpkg.LocalBook, 0, len(books))
+// toCandidates renders each book's device-relative destination.
+//
+// The extension is left off: a PDF becomes an EPUB on the way to the device,
+// and pinning it at a .pdf path would be wrong.
+func toCandidates(books []*library.Book, template string) ([]syncpkg.Candidate, error) {
+	out := make([]syncpkg.Candidate, 0, len(books))
 	for _, b := range books {
-		// PDFs are a source format only; the firmware has no PDF engine.
-		if !b.Format.SyncableToDevice() {
-			continue
-		}
 		rel, err := library.RenderTemplate(template, b)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", b.Path, err)
 		}
-		rel += strings.ToLower(filepath.Ext(b.Path))
-
-		out = append(out, syncpkg.LocalBook{
-			Path: b.Path, SHA256: b.SHA256, Size: b.Size, RelPath: rel,
+		out = append(out, syncpkg.Candidate{
+			Path:    b.Path,
+			Format:  string(b.Format),
+			SHA256:  b.SHA256,
+			Size:    b.Size,
+			RelPath: rel,
 		})
 	}
 	return out, nil
+}
+
+// prepareBooks runs the same conversion and optimization pipeline the CLI uses.
+func prepareBooks(ctx context.Context, cfg *config.Config, dev config.Device,
+	model string, candidates []syncpkg.Candidate) (*syncpkg.Prepared, error) {
+
+	pc := syncpkg.PreparerConfig{
+		ConvertCacheDir: filepath.Join(cfg.Paths.Cache, "converted"),
+		OptimizedDir:    cfg.Paths.OptimizedDir(),
+		ConverterName:   cfg.Convert.PDF,
+		Timeout:         cfg.Convert.Timeout.Duration,
+		Optimize:        dev.Optimize,
+		Syncable: func(format string) bool {
+			return library.Format(format).SyncableToDevice()
+		},
+	}
+
+	if dev.Optimize {
+		profile, err := syncProfile(dev.Profile, model)
+		if err != nil {
+			return nil, err
+		}
+		pc.Profile = profile
+	}
+	return syncpkg.NewPreparer(pc).Prepare(ctx, candidates)
+}
+
+// syncProfile resolves the optimization target, preferring an explicit config
+// value over the model the device reports.
+func syncProfile(configured, model string) (convert.Profile, error) {
+	if configured != "" {
+		return convert.LookupProfile(configured)
+	}
+	if model != "" {
+		if p, err := convert.ProfileForModel(model); err == nil {
+			return p, nil
+		}
+	}
+	return convert.LookupProfile("generic-v1")
 }
 
 // execute runs the plan, streaming events back into the Elm loop.

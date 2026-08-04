@@ -124,9 +124,28 @@ color depends on terminal detection and would fail in CI for reasons unrelated t
   nothing. Use channels drained by a `tea.Cmd`.
 - Dependencies are kept deliberately small (each one is a future packaging problem). Ask first.
 
+## Conversion and optimization
+
+PDF conversion is **compiled in**, not shelled out to: `internal/convert` imports
+[decant](https://github.com/sroberts/decant), which reconstructs reflowable EPUB 3 from a
+text-layer PDF and ships a `crosspoint` profile whose numbers come from reading the firmware. It is
+pure Go, so the static-binary and cross-compile invariants hold. This is the answer to the
+dependency question in `spec.md` 14.6 — the best PDF path is no longer a Calibre component.
+
+- `decant` is the default and reads PDF only. `NewForFile` falls back to `ebook-convert`, then
+  `pandoc`, for the formats it does not read. An explicit `--converter` is honored strictly.
+- decant's module version is folded into the cache key, so upgrading it re-converts rather than
+  serving artifacts the old version produced. `decantPinnedVersion` must track `go.mod`; a test
+  enforces this, because a `go test` binary's build info carries no dependency list.
+- Optimizer panel dimensions are filled in **only where they have a source**. The X4 is 480x800
+  from decant; the X3 has never been measured and is deliberately zero, which makes downscaling a
+  no-op while grayscale and recompression still apply. Do not guess one in.
+
 ## Not built yet
 
-EPUB optimization, KOReader progress sync, the SD-card transport, WebDAV, and
-mDNS discovery are all designed in `spec.md` but unimplemented. Conversion is wired to
-`shelf convert` but not yet into `sync`, so PDFs are still skipped on the way to a device. The spec's Settings screen is
-blocked upstream by the firmware crash above.
+KOReader progress sync, the SD-card transport, WebDAV, and mDNS discovery are all designed in
+`spec.md` but unimplemented. Conversion and optimization are wired to `shelf convert` and
+`shelf optimize` but not yet into `sync`, so PDFs are still skipped on the way to a device. Font
+stripping is not implemented: dropping a font means removing its manifest item and every
+`@font-face` rule referencing it, and a partial job produces an EPUB `epubcheck` rejects. The
+spec's Settings screen is blocked upstream by the firmware crash above.

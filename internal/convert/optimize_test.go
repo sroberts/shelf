@@ -407,11 +407,12 @@ func TestOptimizeWithoutPanelSizeSkipsDownscaling(t *testing.T) {
 	src := writeEPUB(t, dir)
 	dst := filepath.Join(dir, "out.epub")
 
-	// The shipped profiles have no panel dimensions until someone reads them
-	// off hardware; geometry must be a no-op rather than a guess.
-	p := builtinProfiles["x4-v1"]
+	// A profile whose panel has not been read off hardware must make geometry
+	// a no-op rather than guess. The X4's dimensions came from decant; the
+	// X3's have not been measured, so it is the profile that still degrades.
+	p := builtinProfiles["x3-v1"]
 	if p.KnowsPanelSize() {
-		t.Fatal("x4-v1 unexpectedly has panel dimensions; update this test")
+		t.Fatal("x3-v1 unexpectedly has panel dimensions; update this test")
 	}
 
 	res, err := Optimize(src, dst, p)
@@ -690,7 +691,7 @@ func TestOptimizedOutputPassesEpubCheck(t *testing.T) {
 		p    Profile
 	}{
 		{"with panel size", testProfile()},
-		{"without panel size", builtinProfiles["x4-v1"]},
+		{"without panel size", builtinProfiles["x3-v1"]},
 		{"dithered", func() Profile { p := testProfile(); p.Dither = true; return p }()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

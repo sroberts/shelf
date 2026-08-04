@@ -52,21 +52,27 @@ type Profile struct {
 
 // builtinProfiles are the profiles shelf ships with.
 //
-// The dimensions are intentionally absent. spec.md 14.5 lists panel size for
-// the X3 and X4 as an open question to be answered by reading the hardware,
-// and a hardcoded guess is worse than doing less: at zero the optimizer's
-// geometry step is a no-op and everything else still applies. Fill these in
-// from a real device, or override per-device in config.toml.
+// A dimension is filled in only where it has a source. spec.md 14.5 lists
+// panel size as an open question to be answered by reading the hardware, and a
+// guess is worse than doing less: at zero the optimizer's geometry step is a
+// no-op and grayscale and recompression still apply. Override per device in
+// config.toml.
 var builtinProfiles = map[string]Profile{
+	// The X3's panel has not been read. Left at zero deliberately — see above.
 	"x3-v1": {
 		Name:        "x3-v1",
 		Model:       "X3",
 		Grayscale:   true,
 		JPEGQuality: 80,
 	},
+	// 480x800 from decant's crosspoint profile, whose numbers were taken from
+	// the CrossPoint firmware rather than inferred (decant options.go, "a
+	// 480x800 E Ink panel on an ESP32-C3").
 	"x4-v1": {
 		Name:        "x4-v1",
 		Model:       "X4",
+		MaxWidth:    480,
+		MaxHeight:   800,
 		Grayscale:   true,
 		JPEGQuality: 80,
 	},

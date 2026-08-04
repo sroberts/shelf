@@ -42,27 +42,42 @@ var cmdConvert = &command{
 			return err
 		}
 
-		name := cfg.Convert.PDF
-		if *converterName != "" {
-			name = *converterName
-		}
 		limit := cfg.Convert.Timeout.Duration
 		if *timeout > 0 {
 			limit = *timeout
 		}
 
-		conv, err := convert.New(name, limit)
-		if err != nil {
-			// A missing binary is a setup problem; the error already says how
-			// to fix it, so do not bury it under a stack of context.
-			return err
+		// An explicit --converter is honored strictly: the user named it, so
+		// silently running something else would be wrong. The configured
+		// default answers "what converts my PDFs" and is allowed to fall back
+		// per format, since the built-in default reads PDF only.
+		var resolve func(string) (*convert.Converter, error)
+		if *converterName != "" {
+			conv, err := convert.New(*converterName, limit)
+			if err != nil {
+				// A missing binary is a setup problem; the error already says
+				// how to fix it, so do not bury it under a stack of context.
+				return err
+			}
+			resolve = func(string) (*convert.Converter, error) { return conv, nil }
+		} else {
+			resolve = func(src string) (*convert.Converter, error) {
+				return convert.NewForFile(cfg.Convert.PDF, src, limit)
+			}
 		}
+
 		cache := convert.NewCache(filepath.Join(cfg.Paths.Cache, "converted"))
 
 		var failed int
 		for _, src := range fs.Args() {
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			conv, err := resolve(src)
+			if err != nil {
+				failed++
+				fmt.Fprintf(os.Stderr, "%s: %v\n", filepath.Base(src), err)
+				continue
 			}
 			if err := convertOne(ctx, conv, cache, src, *outDir, *force, *cacheOnly, *asJSON); err != nil {
 				failed++

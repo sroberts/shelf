@@ -49,9 +49,14 @@ type Entry struct {
 // The converter's argument list is folded in, not just its name: changing
 // --enable-heuristics changes the output, and reusing an artifact produced
 // under different settings would be wrong.
+//
+// So is its version, which matters for a built-in converter: upgrading the
+// compiled-in library changes the output for an unchanged book and unchanged
+// settings, and there is no binary on PATH whose absence would otherwise hint
+// that anything moved.
 func key(sourceSHA string, p Preset) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00", sourceSHA, p.Name)
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00", sourceSHA, p.Name, p.Version)
 	for _, a := range p.Args {
 		fmt.Fprintf(h, "%s\x00", a)
 	}

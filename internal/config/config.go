@@ -106,7 +106,7 @@ func Default() Config {
 		Inbox:          "",
 		NamingTemplate: "{author}/{series} {series_index:02d} - {title}",
 		UI:             UI{Theme: "auto", Graphics: "auto"},
-		Convert:        Convert{PDF: "ebook-convert", Timeout: Duration{10 * time.Minute}},
+		Convert:        Convert{PDF: "decant", Timeout: Duration{10 * time.Minute}},
 		Sync: Sync{
 			InterOpDelay: Duration{150 * time.Millisecond},
 			MaxRetries:   3,

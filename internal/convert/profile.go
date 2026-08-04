@@ -58,7 +58,11 @@ type Profile struct {
 // no-op and grayscale and recompression still apply. Override per device in
 // config.toml.
 var builtinProfiles = map[string]Profile{
-	// The X3's panel has not been read. Left at zero deliberately — see above.
+	// The X3's panel geometry is unknown and cannot be measured here: this
+	// project has only an X4. Left at zero deliberately, which is safe —
+	// the optimizer skips downscaling and still applies grayscale and
+	// recompression. Filling it in needs an X3 owner or the vendor SDK, not a
+	// product-page number.
 	"x3-v1": {
 		Name:        "x3-v1",
 		Model:       "X3",

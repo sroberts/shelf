@@ -16,7 +16,7 @@ derived cache you can delete at any time.
 
 ## Status
 
-M0–M3 are implemented, tested, and verified against real hardware (an X4 on firmware 1.4.1).
+M0–M4 are implemented, tested, and verified against real hardware (an X4 on firmware 1.4.1).
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -24,9 +24,26 @@ M0–M3 are implemented, tested, and verified against real hardware (an X4 on fi
 | M1 | Device HTTP client and discovery | done |
 | M2 | WebSocket upload and the sync engine | done |
 | M3 | Terminal interface: library, devices, sync | done |
+| M4 | PDF conversion and device-targeted optimization | done |
 
-PDF conversion, EPUB optimization, and KOReader progress sync are designed in `spec.md` but not
-yet built. The spec's Settings screen is blocked upstream — see the firmware note below.
+KOReader progress sync, the SD-card transport, WebDAV, and mDNS discovery are designed in
+`spec.md` but not yet built. The spec's Settings screen is blocked upstream — see the firmware
+note below.
+
+## Conversion needs nothing installed
+
+The firmware has no PDF engine, so shelf converts PDFs on the way to a device. That conversion
+runs **in-process**: no Calibre, no Java, no `mutool`, nothing on `PATH`. `decant` is compiled in
+and reconstructs reflowable EPUB 3 from a text-layer PDF, targeting the CrossPoint panel
+specifically.
+
+A scanned PDF with no text layer fails with a clear error pointing at OCR, rather than producing
+a technically valid EPUB of page images that turns out to be unreadable on the device.
+
+Images are downscaled to the panel, converted to greyscale, and recompressed. Where the panel
+geometry is not known — the X3's has not been read off hardware — the geometry step is skipped
+rather than guessed at, since downscaling to the wrong size discards detail the panel could have
+shown.
 
 ## The terminal interface
 

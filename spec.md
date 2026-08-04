@@ -475,7 +475,18 @@ M0 through M2 are the actual product. Everything after is refinement.
 3. **No device-side hashing.** Verification requires downloading the file back. Accept size-based detection as the default and make `--verify` opt-in.
 4. **`.xtc`/`.xtch` is undocumented here.** Treat it as an opaque passthrough format: index it, sync it, never parse or generate it.
 5. **Panel dimensions for X3 and X4** are not in the docs reviewed. Read them off the hardware and put them in the profile config table rather than hardcoding a guess.
+   **Half answered.** X4 is 480x800, taken from the CrossPoint firmware by way of `decant`'s
+   crosspoint profile, and is in `x4-v1`. **X3 is still unread** and `x3-v1` deliberately carries
+   zero: at zero the optimizer skips geometry and still applies grayscale and recompression, which
+   is strictly better than downscaling to a guessed size and discarding detail the panel could have
+   shown. Fill it in from hardware, not from a product page.
 6. **`ebook-convert` dependency** reintroduces a Calibre component as the best PDF path. It is a subprocess and it is swappable, but it is a dependency. Decide now whether that is acceptable or whether `mutool` plus a hand-rolled assembler is worth the effort.
+   **Answered: neither.** The PDF path is `decant`, a pure-Go library compiled in, so a PDF converts
+   with nothing on `PATH` — no Calibre, no Java, no `mutool`. Every external converter and the whole
+   subprocess path were removed rather than kept as fallbacks: shelf indexes four formats and the
+   firmware renders three of them, so PDF is the only one that ever needs converting. The external
+   converters were carrying formats shelf cannot index, in exchange for a `PATH` dependency, a
+   subprocess lifetime, and an injection surface.
 7. **Wi-Fi throughput on an ESP32-C3 is modest.** A large library's first sync will take a long time. Make the SD-card transport a first-class path, not an afterthought, for bulk initial loads.
 
 ---

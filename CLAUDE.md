@@ -47,7 +47,8 @@ back the other way; the device is a dumb, path-stable target.
 - `internal/epub` — parse and rewrite EPUB metadata in place. Read-lenient, write-conservative.
 - `internal/library` — SQLite index, scan, search, shelves, import, naming templates.
 - `internal/device` — HTTP client, discovery, WebSocket upload, firmware gating.
-- `internal/convert` — PDF/TXT to EPUB via external converters, cached and quality-assessed.
+- `internal/convert` — PDF to EPUB, compiled in, cached and quality-assessed.
+- `internal/kosync` — KOReader progress sync: document ids, store, and an embedded server.
 - `internal/sync` — manifest, planner, executor.
 - `internal/tui` — Bubble Tea frontend over the same internal API the CLI uses.
 - `cmd/shelf` — flag parsing and dispatch. Bare `shelf` opens the TUI.
@@ -160,6 +161,18 @@ dependency question in `spec.md` 14.6 — the best PDF path is no longer a Calib
 - Optimizer panel dimensions are filled in **only where they have a source**. The X4 is 480x800
   from decant; the X3 has never been measured and is deliberately zero, which makes downscaling a
   no-op while grayscale and recompression still apply. Do not guess one in.
+
+### The document id is not what the documentation says
+
+`internal/kosync` identifies a book by KOReader's partial MD5. The first sample offset is **0**,
+not 256. KOReader computes `lshift(1024, 2*i)` for `i = -1..10` using LuaJIT's bit library, which
+masks the shift count to five bits: `-2` becomes `30`, and `1024 << 30` overflows to zero.
+CrossPoint's `KOReaderDocumentId.h` header comment documents 256 and contradicts its own
+implementation. Getting this wrong produces no error — progress simply never matches. Pinned by
+`TestOffsetsMatchKOReader`.
+
+`progress.db` is **not** disposable, unlike `index.db`. The device pushes reading positions there
+and keeps no synchronised copy.
 
 ## Not built yet
 

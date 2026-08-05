@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/sroberts/shelf/internal/config"
+	"github.com/sroberts/shelf/internal/kosync"
 	"github.com/sroberts/shelf/internal/library"
 )
 
@@ -102,6 +103,44 @@ func (a *app) close() {
 	}
 }
 
+// progress loads reading percentages keyed by KOReader document id.
+//
+// Returns nil when no kosync user is configured, which is the normal state
+// before anyone sets up sync. A missing or unreadable store is also nil rather
+// than an error: not having read anything yet should not stop you listing your
+// library.
+func (a *app) progress() map[string]kosync.Progress {
+	cfg, err := a.config()
+	if err != nil || cfg.Kosync.User == "" {
+		return nil
+	}
+
+	store, err := kosync.OpenStore(cfg.Paths.ProgressFile())
+	if err != nil {
+		return nil
+	}
+	defer store.Close()
+
+	byDoc, err := store.AllProgress(cfg.Kosync.User)
+	if err != nil {
+		return nil
+	}
+	return byDoc
+}
+
+// percentFor returns a book's read percentage, or nil when none is recorded.
+func percentFor(b *library.Book, byDoc map[string]kosync.Progress) *float64 {
+	if byDoc == nil || b.DocID == "" {
+		return nil
+	}
+	p, ok := byDoc[b.DocID]
+	if !ok {
+		return nil
+	}
+	pct := p.Percentage * 100
+	return &pct
+}
+
 // emitJSON writes one newline-delimited JSON object, the format `--json` uses
 // so output pipes straight into jq.
 func emitJSON(v any) error {
@@ -127,10 +166,13 @@ type bookJSON struct {
 	Tags        []string          `json:"tags,omitempty"`
 	Identifiers map[string]string `json:"identifiers,omitempty"`
 	SHA256      string            `json:"sha256"`
+	Percent     *float64          `json:"percent_read,omitempty"`
 	Added       int64             `json:"added_unix"`
 }
 
-func toJSON(b *library.Book) bookJSON {
+func toJSON(b *library.Book) bookJSON { return toJSONWithProgress(b, nil) }
+
+func toJSONWithProgress(b *library.Book, byDoc map[string]kosync.Progress) bookJSON {
 	return bookJSON{
 		Path:        b.Path,
 		Title:       b.DisplayTitle(),
@@ -146,6 +188,7 @@ func toJSON(b *library.Book) bookJSON {
 		Tags:        b.Tags,
 		Identifiers: b.Identifiers,
 		SHA256:      b.SHA256,
+		Percent:     percentFor(b, byDoc),
 		Added:       b.AddedUnix,
 	}
 }

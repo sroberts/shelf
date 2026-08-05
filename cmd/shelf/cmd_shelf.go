@@ -161,10 +161,12 @@ func shelfShow(a *app, args []string) error {
 		return err
 	}
 
+	byDoc := a.progress()
+
 	switch {
 	case *asJSON:
 		for _, b := range books {
-			if err := emitJSON(toJSON(b)); err != nil {
+			if err := emitJSON(toJSONWithProgress(b, byDoc)); err != nil {
 				return err
 			}
 		}
@@ -173,7 +175,7 @@ func shelfShow(a *app, args []string) error {
 			fmt.Println(b.Path)
 		}
 	default:
-		printBookTable(books)
+		printBookTable(books, byDoc)
 	}
 	return nil
 }

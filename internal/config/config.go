@@ -39,6 +39,7 @@ type Config struct {
 	NamingTemplate string `toml:"naming_template"`
 
 	UI      UI       `toml:"ui"`
+	Kosync  Kosync   `toml:"kosync"`
 	Devices []Device `toml:"device"`
 	Convert Convert  `toml:"convert"`
 	Sync    Sync     `toml:"sync"`
@@ -66,7 +67,19 @@ type Device struct {
 	Mount     string    `toml:"mount"` // SD transport only
 }
 
-// Convert configures the external conversion subprocesses. Unused until M4.
+// Kosync configures reading-progress sync.
+//
+// The device pushes progress to a kosync server; shelf runs one with
+// `shelf serve` and reads from the same store to show percentages.
+type Kosync struct {
+	// User is whose progress the library table shows. Empty disables the
+	// percentage column rather than guessing between accounts.
+	User string `toml:"user"`
+	// Listen is the default address for `shelf serve`.
+	Listen string `toml:"listen"`
+}
+
+// Convert configures the conversion pipeline.
 type Convert struct {
 	PDF     string   `toml:"pdf"`
 	Timeout Duration `toml:"timeout"`
@@ -106,6 +119,7 @@ func Default() Config {
 		Inbox:          "",
 		NamingTemplate: "{author}/{series} {series_index:02d} - {title}",
 		UI:             UI{Theme: "auto", Graphics: "auto"},
+		Kosync:         Kosync{Listen: ":8080"},
 		Convert:        Convert{PDF: "decant", Timeout: Duration{10 * time.Minute}},
 		Sync: Sync{
 			InterOpDelay: Duration{150 * time.Millisecond},

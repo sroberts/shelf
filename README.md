@@ -16,7 +16,8 @@ derived cache you can delete at any time.
 
 ## Status
 
-M0–M4 are implemented, tested, and verified against real hardware (an X4 on firmware 1.4.1).
+M0–M5 are implemented and tested. M0–M4 are verified against real hardware (an X4 on firmware
+1.4.1); M5's device round trip is not yet confirmed — see below.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -25,10 +26,26 @@ M0–M4 are implemented, tested, and verified against real hardware (an X4 on fi
 | M2 | WebSocket upload and the sync engine | done |
 | M3 | Terminal interface: library, devices, sync | done |
 | M4 | PDF conversion and device-targeted optimization | done |
+| M5 | Reading-progress sync, client and embedded server | done |
 
-KOReader progress sync, the SD-card transport, WebDAV, and mDNS discovery are designed in
-`spec.md` but not yet built. The spec's Settings screen is blocked upstream — see the firmware
+The SD-card transport, WebDAV, and mDNS discovery are designed in `spec.md` but not yet built. The spec's Settings screen is blocked upstream — see the firmware
 note below.
+
+## Reading progress
+
+The reader ships a KOReader sync client, so shelf runs the other end of it:
+
+```sh
+shelf serve            # prints the LAN address to point the reader at
+```
+
+Register an account from the reader's sync settings, then restart with `--no-registration`. Set
+`[kosync] user` in the config and `shelf ls` grows a READ column.
+
+Two things to know. The protocol runs over plain HTTP and sends both `MD5(password)` and HTTP
+Basic with the password itself, so use a credential that is unique and disposable. And
+`progress.db` lives under the data directory rather than the cache — unlike `index.db` it cannot
+be rebuilt, because the reader pushes positions here and keeps no synchronised copy.
 
 ## Conversion needs nothing installed
 

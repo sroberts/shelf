@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/sroberts/shelf/internal/epub"
+	"github.com/sroberts/shelf/internal/kosync"
 )
 
 // ScanOptions controls a library scan.
@@ -232,8 +233,19 @@ func indexFile(osPath, canonical string, size, mtime int64, format Format, cover
 		return nil, err
 	}
 
+	// The KOReader document id is what reading progress is keyed by. Computing
+	// it here, once per changed file, is what lets a listing show percentages
+	// without rehashing the library.
+	docID, err := kosync.DocumentID(osPath)
+	if err != nil {
+		// Not fatal: a book that cannot be hashed is still a book, it just
+		// cannot be matched to progress.
+		docID = ""
+	}
+
 	b := &Book{
 		SHA256:    sum,
+		DocID:     docID,
 		Path:      canonical,
 		Size:      size,
 		MTimeUnix: mtime,

@@ -31,6 +31,9 @@ const schema = `
 CREATE TABLE books (
   id            INTEGER PRIMARY KEY,
   sha256        TEXT NOT NULL,
+  -- KOReader partial-MD5, used to join reading progress. Cached here because
+  -- hashing every book on every listing would make shelf ls unusable.
+  doc_id        TEXT,
   path          TEXT NOT NULL UNIQUE,
   size          INTEGER NOT NULL,
   mtime_unix    INTEGER NOT NULL,
@@ -50,6 +53,7 @@ CREATE TABLE books (
   tags_flat     TEXT
 );
 CREATE INDEX books_sha256 ON books(sha256);
+CREATE INDEX books_doc_id ON books(doc_id);
 CREATE INDEX books_author_sort ON books(author_sort);
 CREATE INDEX books_series ON books(series, series_index);
 
@@ -97,7 +101,7 @@ END;
 // schemaVersion is bumped whenever schema changes. Because the index is a pure
 // cache, an unrecognized version is handled by rebuilding from scratch rather
 // than by writing migration code.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // DB is an open library index.
 type DB struct {

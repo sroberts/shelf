@@ -19,7 +19,7 @@ var cmdServe = &command{
 	usage:   "serve [--kosync ADDR] [--no-registration] [--verbose]",
 	run: func(ctx context.Context, a *app, args []string) error {
 		fs := newFlagSet("serve")
-		addr := fs.String("kosync", ":8080", "address to listen on")
+		addr := fs.String("kosync", "", "address to listen on (default: from config)")
 		noRegistration := fs.Bool("no-registration", false,
 			"refuse new account creation (set this once your reader is registered)")
 		verbose := fs.Bool("verbose", false, "log every request")
@@ -33,6 +33,13 @@ var cmdServe = &command{
 		}
 		if err := cfg.Paths.EnsureDirs(); err != nil {
 			return err
+		}
+
+		if *addr == "" {
+			*addr = cfg.Kosync.Listen
+		}
+		if *addr == "" {
+			*addr = ":8080"
 		}
 
 		store, err := kosync.OpenStore(cfg.Paths.ProgressFile())

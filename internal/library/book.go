@@ -51,8 +51,10 @@ func (f Format) SyncableToDevice() bool {
 
 // Book is one indexed file.
 type Book struct {
-	ID          int64
-	SHA256      string
+	ID     int64
+	SHA256 string
+	// DocID is the KOReader partial-MD5 that reading progress is keyed by.
+	DocID       string
 	Path        string // absolute, canonical, NFC-normalized
 	Size        int64
 	MTimeUnix   int64
@@ -128,12 +130,12 @@ func upsertTx(tx *sql.Tx, b *Book) error {
 	b.Tags = tags
 
 	const q = `
-INSERT INTO books (sha256, path, size, mtime_unix, format, title, author_sort, authors,
+INSERT INTO books (sha256, doc_id, path, size, mtime_unix, format, title, author_sort, authors,
                    series, series_index, language, publisher, pubdate, identifiers,
                    added_unix, cover_blob, meta_json, tags_flat)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(path) DO UPDATE SET
-  sha256=excluded.sha256, size=excluded.size, mtime_unix=excluded.mtime_unix,
+  sha256=excluded.sha256, doc_id=excluded.doc_id, size=excluded.size, mtime_unix=excluded.mtime_unix,
   format=excluded.format, title=excluded.title, author_sort=excluded.author_sort,
   authors=excluded.authors, series=excluded.series, series_index=excluded.series_index,
   language=excluded.language, publisher=excluded.publisher, pubdate=excluded.pubdate,
@@ -143,7 +145,7 @@ RETURNING id`
 
 	var id int64
 	err = tx.QueryRow(q,
-		b.SHA256, b.Path, b.Size, b.MTimeUnix, string(b.Format), b.Title, b.AuthorSort, authors,
+		b.SHA256, b.DocID, b.Path, b.Size, b.MTimeUnix, string(b.Format), b.Title, b.AuthorSort, authors,
 		b.Series, b.SeriesIndex, b.Language, b.Publisher, b.PubDate, identifiers,
 		b.AddedUnix, b.Cover, b.MetaJSON, strings.Join(tags, " "),
 	).Scan(&id)
@@ -230,7 +232,7 @@ func (db *DB) Snapshot() (PathIndex, error) {
 	return out, rows.Err()
 }
 
-const bookColumns = `id, sha256, path, size, mtime_unix, format, title, author_sort, authors,
+const bookColumns = `id, sha256, doc_id, path, size, mtime_unix, format, title, author_sort, authors,
  series, series_index, language, publisher, pubdate, identifiers, added_unix, cover_blob,
  meta_json, tags_flat`
 
@@ -277,6 +279,7 @@ func scanBook(rows *sql.Rows) (*Book, error) {
 	var (
 		b                                                   Book
 		format                                              string
+		docID                                               sql.NullString
 		title, authorSort, authors, series, language        sql.NullString
 		publisher, pubdate, identifiers, metaJSON, tagsFlat sql.NullString
 		seriesIndex                                         sql.NullFloat64
@@ -284,7 +287,7 @@ func scanBook(rows *sql.Rows) (*Book, error) {
 	)
 
 	if err := rows.Scan(
-		&b.ID, &b.SHA256, &b.Path, &b.Size, &b.MTimeUnix, &format, &title, &authorSort, &authors,
+		&b.ID, &b.SHA256, &docID, &b.Path, &b.Size, &b.MTimeUnix, &format, &title, &authorSort, &authors,
 		&series, &seriesIndex, &language, &publisher, &pubdate, &identifiers, &b.AddedUnix,
 		&cover, &metaJSON, &tagsFlat,
 	); err != nil {
@@ -292,6 +295,7 @@ func scanBook(rows *sql.Rows) (*Book, error) {
 	}
 
 	b.Format = Format(format)
+	b.DocID = docID.String
 	b.Title = title.String
 	b.AuthorSort = authorSort.String
 	b.Series = series.String

@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/sroberts/shelf/internal/epub"
+	"github.com/sroberts/shelf/internal/kosync"
 	"github.com/sroberts/shelf/internal/library"
 )
 
@@ -99,10 +100,15 @@ var cmdLs = &command{
 			return err
 		}
 
+		// Reading progress is looked up once for the whole listing rather than
+		// per book: it is one query against a separate store, and the join is
+		// by document id in memory.
+		byDoc := a.progress()
+
 		switch {
 		case *asJSON:
 			for _, b := range books {
-				if err := emitJSON(toJSON(b)); err != nil {
+				if err := emitJSON(toJSONWithProgress(b, byDoc)); err != nil {
 					return err
 				}
 			}
@@ -111,20 +117,34 @@ var cmdLs = &command{
 				fmt.Println(b.Path)
 			}
 		default:
-			printBookTable(books)
+			printBookTable(books, byDoc)
 		}
 		return nil
 	},
 }
 
-func printBookTable(books []*library.Book) {
+func printBookTable(books []*library.Book, byDoc map[string]kosync.Progress) {
 	if len(books) == 0 {
 		fmt.Fprintln(os.Stderr, "no books match")
 		return
 	}
 
+	// The read column only appears when there is progress to show, so a
+	// library with no sync configured looks exactly as it did before.
+	showRead := false
+	for _, b := range books {
+		if percentFor(b, byDoc) != nil {
+			showRead = true
+			break
+		}
+	}
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TITLE\tAUTHOR\tSERIES\tFORMAT\tSIZE")
+	if showRead {
+		fmt.Fprintln(w, "TITLE\tAUTHOR\tSERIES\tFORMAT\tSIZE\tREAD")
+	} else {
+		fmt.Fprintln(w, "TITLE\tAUTHOR\tSERIES\tFORMAT\tSIZE")
+	}
 
 	for _, b := range books {
 		series := b.Series
@@ -132,14 +152,39 @@ func printBookTable(books []*library.Book) {
 			series = fmt.Sprintf("%s #%s", series,
 				strconv.FormatFloat(b.SeriesIndex, 'f', -1, 64))
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		row := fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
 			truncate(b.DisplayTitle(), 50),
 			truncate(b.DisplayAuthor(), 28),
 			truncate(series, 24),
 			b.Format,
 			humanSize(b.Size))
+
+		if showRead {
+			read := ""
+			if pct := percentFor(b, byDoc); pct != nil {
+				read = formatPercent(*pct)
+			}
+			row += "\t" + read
+		}
+		fmt.Fprintln(w, row)
 	}
 	w.Flush()
+}
+
+// formatPercent renders a read percentage.
+//
+// "done" rather than "100%" for a finished book: the device reports 0.9998 for
+// a book you have read to the last page, and rounding that to 100% then showing
+// 100% for one genuinely at the end loses the only distinction that matters.
+func formatPercent(pct float64) string {
+	switch {
+	case pct >= 99.5:
+		return "done"
+	case pct < 1 && pct > 0:
+		return "<1%"
+	default:
+		return fmt.Sprintf("%.0f%%", pct)
+	}
 }
 
 func truncate(s string, n int) string {

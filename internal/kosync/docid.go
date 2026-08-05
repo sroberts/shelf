@@ -161,6 +161,26 @@ func PasswordKey(password string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// FormatPercent renders a read percentage for display.
+//
+// "done" rather than "100%" is deliberate: the device reports 0.9998 for a book
+// read to its last page, so rounding to 100% would make "nearly finished" and
+// "finished" indistinguishable — and that is the one distinction a reader
+// actually cares about in a list.
+//
+// Lives here rather than in each frontend so the CLI and the TUI cannot drift
+// into disagreeing about what 99.6% means.
+func FormatPercent(pct float64) string {
+	switch {
+	case pct >= 99.5:
+		return "done"
+	case pct > 0 && pct < 1:
+		return "<1%"
+	default:
+		return fmt.Sprintf("%.0f%%", pct)
+	}
+}
+
 // NormalizeUsername trims a username for comparison. The protocol is silent on
 // case, so shelf preserves it and only strips surrounding space, which is
 // almost always a paste artifact rather than intent.

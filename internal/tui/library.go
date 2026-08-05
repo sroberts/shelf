@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/sroberts/shelf/internal/kosync"
 	"github.com/sroberts/shelf/internal/library"
 	syncpkg "github.com/sroberts/shelf/internal/sync"
 )
@@ -41,6 +42,10 @@ type libraryModel struct {
 	// syncState maps a book path to a glyph for the active device.
 	syncState map[string]string
 
+	// readPct maps a book path to its read percentage, when progress sync is
+	// configured and something has been recorded.
+	readPct map[string]float64
+
 	width, height int
 	loading       bool
 }
@@ -57,6 +62,7 @@ func newLibraryModel(app *App, keys KeyMap, styles Styles) libraryModel {
 		styles:    styles,
 		selected:  map[string]bool{},
 		syncState: map[string]string{},
+		readPct:   map[string]float64{},
 		filter:    ti,
 		loading:   true,
 	}
@@ -69,7 +75,45 @@ type (
 		query string
 	}
 	syncStateMsg struct{ state map[string]string }
+	readPctMsg   struct{ pct map[string]float64 }
 )
+
+// loadProgress reads reading percentages from the kosync store.
+//
+// Off the UI thread like every other read, and silent on failure: no configured
+// user, or no store yet, simply means no column. That is the normal state
+// before anyone sets up sync and is not worth an error banner.
+func (m libraryModel) loadProgress() tea.Cmd {
+	cfg := m.app.Config
+	books := m.books
+
+	return func() tea.Msg {
+		out := map[string]float64{}
+		if cfg.Kosync.User == "" {
+			return readPctMsg{out}
+		}
+
+		store, err := kosync.OpenStore(cfg.Paths.ProgressFile())
+		if err != nil {
+			return readPctMsg{out}
+		}
+		defer store.Close()
+
+		byDoc, err := store.AllProgress(cfg.Kosync.User)
+		if err != nil {
+			return readPctMsg{out}
+		}
+		for _, b := range books {
+			if b.DocID == "" {
+				continue
+			}
+			if p, ok := byDoc[b.DocID]; ok {
+				out[b.Path] = p.Percentage * 100
+			}
+		}
+		return readPctMsg{out}
+	}
+}
 
 // load queries the index. Runs as a tea.Cmd so a large library cannot stall
 // the display.
@@ -145,10 +189,14 @@ func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, te
 		if m.cursor >= len(m.books) {
 			m.cursor = max(0, len(m.books)-1)
 		}
-		return m, m.computeSyncState()
+		return m, tea.Batch(m.computeSyncState(), m.loadProgress())
 
 	case syncStateMsg:
 		m.syncState = msg.state
+		return m, nil
+
+	case readPctMsg:
+		m.readPct = msg.pct
 		return m, nil
 
 	case tea.KeyMsg:
@@ -364,7 +412,8 @@ func (m libraryModel) View() string {
 	}
 
 	cols := m.columns()
-	b.WriteString(m.styles.Header.Render(m.renderRow(cols, "", "TITLE", "AUTHOR", "SERIES", "SIZE")))
+	b.WriteString(m.styles.Header.Render(
+		m.renderRow(cols, "", "TITLE", "AUTHOR", "SERIES", "SIZE", "READ")))
 	b.WriteString("\n")
 
 	rows := m.visibleRows()
@@ -389,9 +438,14 @@ func (m libraryModel) View() string {
 				strconv.FormatFloat(book.SeriesIndex, 'f', -1, 64))
 		}
 
+		read := ""
+		if pct, ok := m.readPct[book.Path]; ok {
+			read = kosync.FormatPercent(pct)
+		}
+
 		line := m.renderRow(cols,
 			m.styles.GlyphStyle(glyph).Render(glyph)+marker,
-			book.DisplayTitle(), book.DisplayAuthor(), series, humanSize(book.Size))
+			book.DisplayTitle(), book.DisplayAuthor(), series, humanSize(book.Size), read)
 
 		switch {
 		case i == m.cursor:
@@ -410,10 +464,18 @@ func (m libraryModel) View() string {
 
 // columns computes column widths for the current terminal width.
 func (m libraryModel) columns() []int {
-	// state(2) title author series size
+	// state(2) title author series size [read]
 	avail := m.width - 2 - 4 // glyph+marker, gutters
 	if avail < 30 {
 		avail = 30
+	}
+
+	// The read column costs horizontal space, so it only exists when progress
+	// has actually been recorded.
+	read := 0
+	if len(m.readPct) > 0 {
+		read = 5
+		avail -= read + 1
 	}
 
 	size := 9
@@ -430,10 +492,10 @@ func (m libraryModel) columns() []int {
 	if title < 12 {
 		title = 12
 	}
-	return []int{2, title, author, series, size}
+	return []int{2, title, author, series, size, read}
 }
 
-func (m libraryModel) renderRow(cols []int, state, title, author, series, size string) string {
+func (m libraryModel) renderRow(cols []int, state, title, author, series, size, read string) string {
 	cells := []string{
 		pad(state, cols[0]),
 		pad(title, cols[1]),
@@ -443,6 +505,9 @@ func (m libraryModel) renderRow(cols []int, state, title, author, series, size s
 		cells = append(cells, pad(series, cols[3]))
 	}
 	cells = append(cells, padLeft(size, cols[4]))
+	if cols[5] > 0 {
+		cells = append(cells, padLeft(read, cols[5]))
+	}
 	return strings.Join(cells, " ")
 }
 

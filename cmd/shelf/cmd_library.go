@@ -162,29 +162,13 @@ func printBookTable(books []*library.Book, byDoc map[string]kosync.Progress) {
 		if showRead {
 			read := ""
 			if pct := percentFor(b, byDoc); pct != nil {
-				read = formatPercent(*pct)
+				read = kosync.FormatPercent(*pct)
 			}
 			row += "\t" + read
 		}
 		fmt.Fprintln(w, row)
 	}
 	w.Flush()
-}
-
-// formatPercent renders a read percentage.
-//
-// "done" rather than "100%" for a finished book: the device reports 0.9998 for
-// a book you have read to the last page, and rounding that to 100% then showing
-// 100% for one genuinely at the end loses the only distinction that matters.
-func formatPercent(pct float64) string {
-	switch {
-	case pct >= 99.5:
-		return "done"
-	case pct < 1 && pct > 0:
-		return "<1%"
-	default:
-		return fmt.Sprintf("%.0f%%", pct)
-	}
 }
 
 func truncate(s string, n int) string {

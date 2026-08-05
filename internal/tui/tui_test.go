@@ -460,3 +460,47 @@ func first(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// The library table grows a READ column only when reading progress exists, so
+// a library with no sync configured looks exactly as it did before.
+func TestLibraryReadColumnAppearsOnlyWithProgress(t *testing.T) {
+	app := testApp(t, book("/lib/a.epub", "A Book", "An Author"))
+
+	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles())
+	m.setSize(100, 20)
+	m.loading = false
+	m.books = []*library.Book{book("/lib/a.epub", "A Book", "An Author")}
+
+	if strings.Contains(m.View(), "READ") {
+		t.Error("the READ column appeared with no progress recorded")
+	}
+
+	m.readPct = map[string]float64{"/lib/a.epub": 37.0}
+	view := m.View()
+	if !strings.Contains(view, "READ") {
+		t.Errorf("the READ header is missing once progress exists:\n%s", view)
+	}
+	if !strings.Contains(view, "37%") {
+		t.Errorf("the percentage is missing:\n%s", view)
+	}
+}
+
+// A finished book reads "done" rather than 100%, since the device reports
+// 0.9998 for a book read to its last page.
+func TestLibraryShowsDoneForFinishedBooks(t *testing.T) {
+	app := testApp(t, book("/lib/a.epub", "A Book", "An Author"))
+
+	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles())
+	m.setSize(100, 20)
+	m.loading = false
+	m.books = []*library.Book{book("/lib/a.epub", "A Book", "An Author")}
+	m.readPct = map[string]float64{"/lib/a.epub": 99.98}
+
+	view := m.View()
+	if !strings.Contains(view, "done") {
+		t.Errorf("a finished book should read 'done':\n%s", view)
+	}
+	if strings.Contains(view, "100%") {
+		t.Errorf("a finished book should not read '100%%':\n%s", view)
+	}
+}

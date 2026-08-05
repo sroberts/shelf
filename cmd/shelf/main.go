@@ -45,6 +45,7 @@ func commands() []*command {
 		cmdSync,
 		cmdPush,
 		cmdPull,
+		cmdServe,
 		cmdDoctor,
 	}
 }

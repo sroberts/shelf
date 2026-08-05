@@ -68,6 +68,13 @@ func (p Paths) ShelvesFile() string { return filepath.Join(p.Config, "shelves.to
 // IndexFile is the derived SQLite cache.
 func (p Paths) IndexFile() string { return filepath.Join(p.Data, "index.db") }
 
+// ProgressFile is the reading-progress store.
+//
+// Under Data rather than Cache deliberately: unlike index.db, this cannot be
+// rebuilt from anything. The device pushes reading positions here and keeps no
+// synchronised copy, so deleting it loses where you are in every book.
+func (p Paths) ProgressFile() string { return filepath.Join(p.Data, "progress.db") }
+
 // LogFile is where shelf logs; never stdout, which belongs to the display.
 func (p Paths) LogFile() string { return filepath.Join(p.State, "shelf.log") }
 

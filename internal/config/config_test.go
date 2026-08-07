@@ -110,7 +110,7 @@ nickname   = "x4"
 host       = "crosspoint.local"
 root       = "Books/"
 transport  = "ws"
-chunk_size = 16384
+chunk_size = 8192
 optimize   = true
 profile    = "x4-v1"
 
@@ -133,7 +133,7 @@ prune = false
 		t.Fatalf("got %d devices, want 1", len(cfg.Devices))
 	}
 	d := cfg.Devices[0]
-	if d.Nickname != "x4" || d.Transport != TransportWS || d.ChunkSize != 16384 {
+	if d.Nickname != "x4" || d.Transport != TransportWS || d.ChunkSize != 8192 {
 		t.Errorf("unexpected device: %+v", d)
 	}
 	// Device roots are normalized to a leading slash and no trailing slash so
@@ -177,9 +177,9 @@ func TestValidate(t *testing.T) {
 			wantErr: "requires mount",
 		},
 		{
-			name:    "chunk size over device RAM budget",
-			toml:    "[[device]]\nnickname='x4'\nchunk_size=131072",
-			wantErr: "chunk_size 131072 out of range",
+			name:    "chunk size over what the device accepts",
+			toml:    "[[device]]\nnickname='x4'\nchunk_size=16384",
+			wantErr: "chunk_size 16384 out of range",
 		},
 		{
 			name:    "chunk size under device write buffer",

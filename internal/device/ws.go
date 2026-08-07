@@ -23,12 +23,22 @@ import (
 // There is no resume. The firmware deletes a partial file on disconnect or
 // error, so a retry restarts from byte zero.
 
-// Chunk size bounds, matching the device's RAM budget. The firmware writes
-// through a 4 KB buffer and runs with roughly 380 KB of usable heap.
+// Chunk size bounds.
+//
+// These are lower than the spec's suggested 16 KB default and 64 KB ceiling,
+// because the device rejects both. The firmware builds against
+// links2004/WebSockets 2.7.3, whose WEBSOCKETS_MAX_DATA_SIZE defaults to
+// 15 KB; a larger frame is refused with a StatusMessageTooBig close and the
+// upload fails outright.
+//
+// Measured on an X4 running 1.4.1: 12288 uploads cleanly, 16384 is rejected
+// every time. The default is 8 KB rather than something nearer the limit
+// because the ESP32-C3 has roughly 380 KB of usable heap and writes through a
+// 4 KB buffer, so headroom matters more than frame count.
 const (
 	MinChunkSize     = 4 * 1024
-	MaxChunkSize     = 64 * 1024
-	DefaultChunkSize = 16 * 1024
+	MaxChunkSize     = 15 * 1024
+	DefaultChunkSize = 8 * 1024
 )
 
 // wsHandshakeTimeout bounds the initial connection and START/READY exchange.
@@ -219,6 +229,11 @@ func (c *Client) sendChunks(
 				report(opts, Progress{Path: dest, Sent: p.received, Total: p.total})
 			}
 		case err := <-readErrs:
+			if tooBig(err) {
+				return false, fmt.Errorf("%w: the device refused a %d-byte frame; "+
+					"lower chunk_size (max %d)",
+					ErrChunkTooBig, opts.chunkSize(), MaxChunkSize)
+			}
 			// A closed connection is only a failure if the device did not
 			// report success first. It sends DONE and then closes, so the
 			// close and the verdict arrive together; treating the close alone
@@ -430,4 +445,14 @@ func parseProgress(msg string) (progressFrame, bool) {
 		return progressFrame{}, false
 	}
 	return progressFrame{received: received, total: total}, true
+}
+
+// tooBig reports whether the device closed the connection because a frame
+// exceeded its buffer.
+func tooBig(err error) bool {
+	if err == nil {
+		return false
+	}
+	return websocket.CloseStatus(err) == websocket.StatusMessageTooBig ||
+		strings.Contains(err.Error(), "StatusMessageTooBig")
 }

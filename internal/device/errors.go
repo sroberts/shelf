@@ -33,6 +33,14 @@ var (
 	// ErrOverflow means more bytes were sent than the START frame declared.
 	ErrOverflow = errors.New("device: upload overflow")
 
+	// ErrChunkTooBig means an upload frame exceeded what the device accepts.
+	//
+	// The firmware closes the connection with StatusMessageTooBig rather than
+	// sending an ERROR frame, so this is detected from the close status. It is
+	// a configuration problem with an obvious fix, and worth saying so plainly
+	// rather than surfacing as a generic lost connection.
+	ErrChunkTooBig = errors.New("device: upload chunk too large")
+
 	// ErrProtectedPath covers the paths shelf must never write to.
 	ErrProtectedPath = errors.New("device: protected path")
 
@@ -117,5 +125,6 @@ func IsRetryable(err error) bool {
 	return !errors.Is(err, ErrProtectedPath) &&
 		!errors.Is(err, ErrInvalidStart) &&
 		!errors.Is(err, ErrOverflow) &&
+		!errors.Is(err, ErrChunkTooBig) &&
 		!errors.Is(err, ErrNotFound)
 }

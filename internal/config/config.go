@@ -26,10 +26,13 @@ const (
 // Chunk size bounds. The device runs on an ESP32-C3 with roughly 380 KB of
 // usable RAM and a 4 KB write buffer, so oversized chunks are a real failure
 // mode rather than a tuning inefficiency.
+//
+// These mirror internal/device: the device refuses frames above ~15 KB, so a
+// config that validated a larger value would pass here and fail at upload.
 const (
 	MinChunkSize     = 4 * 1024
-	MaxChunkSize     = 64 * 1024
-	DefaultChunkSize = 16 * 1024
+	MaxChunkSize     = 15 * 1024
+	DefaultChunkSize = 8 * 1024
 )
 
 // Config is the parsed contents of config.toml.

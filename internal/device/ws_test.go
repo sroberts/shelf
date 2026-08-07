@@ -504,10 +504,13 @@ func TestChunkSizeClamping(t *testing.T) {
 		{0, DefaultChunkSize},
 		{100, DefaultChunkSize},      // below the device write buffer
 		{MinChunkSize, MinChunkSize}, //
-		{16 * 1024, 16 * 1024},       //
+		{12 * 1024, 12 * 1024},       // measured working on an X4
 		{MaxChunkSize, MaxChunkSize}, //
-		{1 << 20, MaxChunkSize},      // above the device RAM budget
-		{-5, DefaultChunkSize},       //
+		// 16 KB is refused by the firmware with StatusMessageTooBig, so it is
+		// clamped rather than passed through to fail at upload time.
+		{16 * 1024, MaxChunkSize},
+		{1 << 20, MaxChunkSize},
+		{-5, DefaultChunkSize},
 	}
 	for _, tt := range tests {
 		if got := (UploadOptions{ChunkSize: tt.in}).chunkSize(); got != tt.want {

@@ -83,7 +83,12 @@ server -> DONE | ERROR:<message>
 
 Implementation rules:
 
-- Chunk size 16 KB default, configurable 4 KB to 64 KB. Do not exceed 64 KB; the device is RAM constrained.
+- Chunk size 8 KB default, configurable 4 KB to 15 KB.
+  **Corrected from the original 16 KB / 64 KB.** The firmware builds against
+  links2004/WebSockets 2.7.3, whose `WEBSOCKETS_MAX_DATA_SIZE` defaults to 15 KB, and refuses a
+  larger frame by closing with `StatusMessageTooBig`. Measured on an X4 running 1.4.1: 12288
+  uploads cleanly, 16384 fails every time. A 16 KB default meant no upload worked at all without
+  overriding `chunk_size`.
 - One upload in flight per device, globally. Serialize behind a mutex in the device client, not just in the sync planner.
 - On disconnect or error the device deletes the partial file. There is no resume. Retries restart from byte zero; cap at 3 attempts with backoff.
 - Map every documented `ERROR:` string to a typed Go error. `ERROR:Write failed - disk full?` aborts the entire sync run, not just the current file.

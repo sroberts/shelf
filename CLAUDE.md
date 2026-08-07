@@ -172,11 +172,17 @@ implementation. Getting this wrong produces no error — progress simply never m
 `TestOffsetsMatchKOReader`.
 
 `progress.db` is **not** disposable, unlike `index.db`. The device pushes reading positions there
-and keeps no synchronised copy.
+and keeps no synchronised copy. `shelf user rm` therefore says how many books it is about to
+discard before it asks.
+
+`shelf user` opens `progress.db` directly rather than talking to a running server, so accounts can
+be managed whether or not `shelf serve` is up. WAL mode plus the store's busy timeout make the
+concurrent access safe, and the server sees a new account on its next request — restarting it is
+never necessary. `TestStoreToleratesASecondConnection` pins this.
 
 ## Not built yet
 
-KOReader progress sync, the SD-card transport, WebDAV, and mDNS discovery are all designed in
+The SD-card transport, WebDAV, and mDNS discovery are all designed in
 `spec.md` but unimplemented. Font stripping is not implemented: dropping a font means removing its
 manifest item and every `@font-face` rule referencing it, and a partial job produces an EPUB
 `epubcheck` rejects. The TUI runs conversion inside its `tea.Cmd` with no progress shown, so a

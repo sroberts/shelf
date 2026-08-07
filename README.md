@@ -36,11 +36,21 @@ note below.
 The reader ships a KOReader sync client, so shelf runs the other end of it:
 
 ```sh
-shelf serve            # prints the LAN address to point the reader at
+shelf user add scott    # prompts for a password, prints what to type into the reader
+shelf serve             # prints the LAN address to point the reader at
 ```
 
-Register an account from the reader's sync settings, then restart with `--no-registration`. Set
-`[kosync] user` in the config and `shelf ls` grows a READ column.
+Accounts can also be registered from the reader's own sync settings, but the reader gives no
+sign of which action it took — a Login against an empty server and a wrong password both surface
+as "Authentication failed". Creating the account here removes that ambiguity. `shelf user ls`,
+`passwd`, and `rm` manage them afterwards, and all four work while `shelf serve` is running: the
+server picks up the change on the next request, with no restart. Once your accounts exist, run
+the server with `--no-registration`. Set `[kosync] user` in the config and `shelf ls` grows a
+READ column.
+
+If the reader reports an authentication failure, check the scheme first. shelf serves plain
+HTTP; an `https://` URL fails the TLS handshake before any credentials are read, and the device
+reports that as a bad login.
 
 Two things to know. The protocol runs over plain HTTP and sends both `MD5(password)` and HTTP
 Basic with the password itself, so use a credential that is unique and disposable. And

@@ -209,6 +209,88 @@ func isUniqueViolation(err error) bool {
 	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
+// SetPassword replaces a user's credential. key is the MD5 the client sends.
+//
+// A fresh salt is generated rather than reusing the old one, so two accounts
+// that happen to share a password still store different verifiers.
+func (s *Store) SetPassword(username, key string) error {
+	username = NormalizeUsername(username)
+	if username == "" || key == "" {
+		return ErrEmptyRequest
+	}
+
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("kosync: generate salt: %w", err)
+	}
+	saltHex := hex.EncodeToString(salt)
+
+	res, err := s.db.Exec(`UPDATE users SET salt = ?, key_hash = ? WHERE username = ?`,
+		saltHex, hashKey(saltHex, key), username)
+	if err != nil {
+		return fmt.Errorf("kosync: set password: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNoSuchUser
+	}
+	return nil
+}
+
+// DeleteUser removes an account and everything it had read.
+//
+// Progress goes with it deliberately: it is keyed by username, so leaving it
+// would orphan rows that a later account of the same name would silently
+// inherit.
+func (s *Store) DeleteUser(username string) error {
+	username = NormalizeUsername(username)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`DELETE FROM users WHERE username = ?`, username)
+	if err != nil {
+		return fmt.Errorf("kosync: delete user: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNoSuchUser
+	}
+	if _, err := tx.Exec(`DELETE FROM progress WHERE username = ?`, username); err != nil {
+		return fmt.Errorf("kosync: delete progress: %w", err)
+	}
+	return tx.Commit()
+}
+
+// UserInfo describes an account for display.
+type UserInfo struct {
+	Username  string
+	CreatedAt int64
+	Books     int
+}
+
+// UserList returns every account with how many books it has progress for.
+func (s *Store) UserList() ([]UserInfo, error) {
+	rows, err := s.db.Query(`
+SELECT u.username, u.created_at, (SELECT count(*) FROM progress p WHERE p.username = u.username)
+FROM users u ORDER BY u.username`)
+	if err != nil {
+		return nil, fmt.Errorf("kosync: list users: %w", err)
+	}
+	defer rows.Close()
+
+	var out []UserInfo
+	for rows.Next() {
+		var u UserInfo
+		if err := rows.Scan(&u.Username, &u.CreatedAt, &u.Books); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // Progress is one book's reading position.
 type Progress struct {
 	Document   string  `json:"document"`

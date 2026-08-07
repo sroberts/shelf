@@ -393,3 +393,51 @@ func TestRootIsHelpful(t *testing.T) {
 		t.Errorf("root page does not identify itself: %s", body)
 	}
 }
+
+// A failed login must stay opaque to the client while being diagnosable in the
+// log. The response cannot distinguish an unknown user from a wrong password —
+// that would be a username oracle — but the operator needs to know which it was.
+func TestAuthFailureIsLoggedWithoutLeakingToTheClient(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "kosync.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	var logged bytes.Buffer
+	srv := NewServer(store, slog.New(slog.NewTextHandler(&logged, nil)))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// No accounts exist at all, which is the case that looks like a bad
+	// password from the reader and is nothing of the sort.
+	resp, body := do(t, ts, "GET", "/users/auth", "scott", "hunter2", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("= %d, want 401", resp.StatusCode)
+	}
+
+	// The client learns nothing beyond "no".
+	if strings.Contains(string(body), "scott") ||
+		strings.Contains(strings.ToLower(string(body)), "register") {
+		t.Errorf("the response leaks account state: %s", body)
+	}
+
+	out := logged.String()
+	if !strings.Contains(out, "scott") {
+		t.Errorf("the log omits the attempted username, making this undiagnosable:\n%s", out)
+	}
+	if !strings.Contains(out, "Register") {
+		t.Errorf("the log should point at registration when no accounts exist:\n%s", out)
+	}
+
+	// With an account present, the hint changes rather than always blaming
+	// registration.
+	if err := store.CreateUser("scott", PasswordKey("hunter2")); err != nil {
+		t.Fatal(err)
+	}
+	logged.Reset()
+	do(t, ts, "GET", "/users/auth", "scott", "wrong-password", nil)
+	if out := logged.String(); !strings.Contains(out, "wrong password") {
+		t.Errorf("a bad password should be named as such:\n%s", out)
+	}
+}

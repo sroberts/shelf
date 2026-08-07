@@ -106,12 +106,48 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (string, b
 	}
 
 	if err := s.store.Authenticate(c.username, c.key); err != nil {
-		// Deliberately identical for an unknown user and a wrong key: telling
-		// them apart would turn this into a username oracle.
+		// The response is deliberately identical for an unknown user and a
+		// wrong key: telling them apart would turn this into a username
+		// oracle. The log is a different audience — it is the operator's own
+		// machine, and without the attempted username a failed login is
+		// undiagnosable.
+		s.log.Info("authentication failed",
+			"username", c.username,
+			"reason", authFailureReason(err),
+			"remote", r.RemoteAddr,
+			"hint", s.authHint(err))
+
 		writeError(w, http.StatusUnauthorized, 2001, "Unauthorized")
 		return "", false
 	}
 	return c.username, true
+}
+
+// authFailureReason names why authentication failed, for the log only.
+func authFailureReason(err error) string {
+	switch {
+	case errors.Is(err, ErrNoSuchUser):
+		return "no such user"
+	case errors.Is(err, ErrBadPassword):
+		return "wrong password"
+	default:
+		return err.Error()
+	}
+}
+
+// authHint suggests what to do about it.
+//
+// The commonest cause by far is a reader logging in before an account exists,
+// which looks like a credentials problem from the device and is nothing of the
+// sort. Saying so here saves an evening.
+func (s *Server) authHint(err error) string {
+	if !errors.Is(err, ErrNoSuchUser) {
+		return "check the password"
+	}
+	if users, e := s.store.Users(); e == nil && len(users) == 0 {
+		return "no accounts exist yet — use the reader's Register action, not Login"
+	}
+	return "username not registered"
 }
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {

@@ -192,6 +192,19 @@ func (s *Store) Authenticate(username, key string) error {
 	return nil
 }
 
+// CheckPassword verifies a plaintext password.
+//
+// Authenticate takes the MD5 the kosync protocol puts on the wire; this takes
+// the password itself, which is what HTTP Basic carries. Both reduce to the
+// same stored verifier, so one account works for kosync and for the OPDS
+// catalog without either caller needing to know how credentials are derived.
+func (s *Store) CheckPassword(username, password string) error {
+	if password == "" {
+		return ErrEmptyRequest
+	}
+	return s.Authenticate(username, PasswordKey(password))
+}
+
 // hashKey derives the stored verifier from a salt and the client's auth key.
 func hashKey(saltHex, key string) string {
 	h := sha256.New()

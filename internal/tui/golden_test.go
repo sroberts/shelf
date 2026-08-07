@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -15,6 +16,18 @@ import (
 )
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite golden frame files")
+
+// TestMain pins the timezone for the whole package.
+//
+// The detail panel formats dates in local time, which is right for a reader and
+// wrong for a golden file: the same fixture renders 2024-01-14 in New York and
+// 2024-01-15 in CI, so the frames would fail on every machine that did not
+// generate them. Forcing UTC here keeps the comparison about layout, which is
+// the same reason the frames are compared with colors stripped.
+func TestMain(m *testing.M) {
+	time.Local = time.UTC
+	os.Exit(m.Run())
+}
 
 // Golden-frame regression.
 //
@@ -74,28 +87,36 @@ func assertGolden(t *testing.T, name, got string) {
 // goldenBooks is a fixed library, chosen to exercise the layout: a series with
 // an index, a standalone title, a long title that must truncate, and CJK text
 // whose runes are two cells wide.
+// goldenAdded is a fixed added-at timestamp (2024-01-15) for the fixtures.
+//
+// Upsert stamps time.Now() when AddedUnix is zero, and the detail panel shows
+// the date — without pinning it here the golden frames encode the day they were
+// generated and start failing at the next midnight.
+const goldenAdded int64 = 1705276800
+
 func goldenBooks() []*library.Book {
 	return []*library.Book{
 		{
 			SHA256: "1", Path: "/lib/earthsea.epub", Format: library.FormatEPUB,
 			Title: "A Wizard of Earthsea", AuthorSort: "Le Guin, Ursula K.",
 			Authors: []string{"Ursula K. Le Guin"},
-			Series:  "Earthsea", SeriesIndex: 1, Size: 1291,
+			Series:  "Earthsea", SeriesIndex: 1, Size: 1291, AddedUnix: goldenAdded,
 		},
 		{
 			SHA256: "2", Path: "/lib/moby.epub", Format: library.FormatEPUB,
 			Title: "Moby-Dick", AuthorSort: "Melville, Herman",
-			Authors: []string{"Herman Melville"}, Size: 24835597,
+			Authors: []string{"Herman Melville"}, Size: 24835597, AddedUnix: goldenAdded,
 		},
 		{
 			SHA256: "3", Path: "/lib/long.epub", Format: library.FormatEPUB,
 			Title:   "The Exceedingly Long Title That Will Certainly Need Truncating Somewhere",
 			Authors: []string{"Verbose, A."}, AuthorSort: "Verbose, A.", Size: 4096,
+			AddedUnix: goldenAdded,
 		},
 		{
 			SHA256: "4", Path: "/lib/kafka.epub", Format: library.FormatEPUB,
 			Title: "海辺のカフカ", AuthorSort: "村上 春樹",
-			Authors: []string{"村上 春樹"}, Size: 1130040,
+			Authors: []string{"村上 春樹"}, Size: 1130040, AddedUnix: goldenAdded,
 		},
 	}
 }

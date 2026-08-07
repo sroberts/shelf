@@ -12,7 +12,8 @@ anything in `internal/device` or `internal/sync`.
 ## Commands
 
 ```sh
-go build ./...
+go build -o shelf ./cmd/shelf            # the actual binary
+go build ./...                           # compile check only — writes no binary
 go vet ./...
 go test ./...
 go test -race ./...                      # what CI runs

@@ -489,18 +489,45 @@ var cmdPull = &command{
 }
 
 // downloadTo writes a device stream to a local file, closing both sides.
+//
+// Staged through a temp file and renamed only on success. A download over a
+// weak link drops part way often enough to matter, and writing straight to the
+// destination leaves a truncated EPUB sitting there under a plausible name —
+// which the next scan indexes as a real book. An interrupted download should
+// leave nothing behind.
 func downloadTo(dest string, src io.ReadCloser) (int64, error) {
 	defer src.Close()
 
-	f, err := os.Create(dest)
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".shelf-pull-*")
 	if err != nil {
 		return 0, err
 	}
+	name := tmp.Name()
 
-	n, copyErr := io.Copy(f, src)
-	closeErr := f.Close()
+	n, copyErr := io.Copy(tmp, src)
 	if copyErr != nil {
+		tmp.Close()
+		os.Remove(name)
 		return n, copyErr
 	}
-	return n, closeErr
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return n, err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return n, err
+	}
+	// os.CreateTemp makes a 0600 file; a pulled book belongs in the library at
+	// the same permissions as everything else there.
+	if err := os.Chmod(name, 0o644); err != nil {
+		os.Remove(name)
+		return n, err
+	}
+	if err := os.Rename(name, dest); err != nil {
+		os.Remove(name)
+		return n, err
+	}
+	return n, nil
 }

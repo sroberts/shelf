@@ -269,6 +269,7 @@ var cmdDoctor = &command{
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		defer w.Flush()
 
+		fmt.Fprintf(w, "shelf\t%s\n", readVersion().String())
 		fmt.Fprintf(w, "platform\t%s/%s\n", runtime.GOOS, runtime.GOARCH)
 		fmt.Fprintf(w, "go\t%s\n", runtime.Version())
 

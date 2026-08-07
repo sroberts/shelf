@@ -114,9 +114,17 @@ Requires Go 1.25 or newer (a floor set by `modernc.org/sqlite`). No cgo, so
 cross-compiling is trivial.
 
 ```sh
-go build ./...
+go build -o shelf ./cmd/shelf   # the binary
 go test ./...
 ```
+
+`go build ./...` on its own compiles every package and discards the result — it is a compile
+check, not a build, and leaves no executable behind. `go install github.com/sroberts/shelf/cmd/shelf@latest`
+works too.
+
+`shelf version` reports what a binary actually is, taken from the build info the toolchain stamps
+in rather than from `-ldflags`: a module version when installed by version, and otherwise the VCS
+revision plus whether the working tree was dirty when it was built.
 
 ## A firmware hazard worth knowing
 

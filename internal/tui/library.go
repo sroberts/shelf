@@ -46,6 +46,10 @@ type libraryModel struct {
 	// configured and something has been recorded.
 	readPct map[string]float64
 
+	// detail is the right-hand panel. It holds no state the table does not
+	// already have; it is fed on every cursor move.
+	detail detailModel
+
 	width, height int
 	loading       bool
 }
@@ -55,6 +59,8 @@ func newLibraryModel(app *App, keys KeyMap, styles Styles) libraryModel {
 	ti.Prompt = "/"
 	ti.Placeholder = "title, author:…, tag:…, and/or/not"
 	ti.CharLimit = 200
+	ti.PromptStyle = styles.Accent
+	ti.TextStyle = styles.StatValue
 
 	return libraryModel{
 		app:       app,
@@ -64,6 +70,7 @@ func newLibraryModel(app *App, keys KeyMap, styles Styles) libraryModel {
 		syncState: map[string]string{},
 		readPct:   map[string]float64{},
 		filter:    ti,
+		detail:    newDetailModel(styles, GraphicsNone),
 		loading:   true,
 	}
 }
@@ -174,6 +181,37 @@ func (m libraryModel) capturing() bool { return m.filtering }
 func (m *libraryModel) setSize(w, h int) {
 	m.width, m.height = w, h
 	m.filter.Width = max(10, w-4)
+
+	dw := 0
+	if m.detail.visible {
+		dw = detailWidth(w)
+	}
+	m.detail.setSize(dw, m.tableHeight())
+}
+
+// tableWidth is what the book table gets once the panel has taken its share.
+func (m libraryModel) tableWidth() int {
+	if w := m.detail.width; w > 0 {
+		// One column of gutter between the table and the panel border.
+		return max(20, m.width-w-1)
+	}
+	return m.width
+}
+
+// tableHeight is the rows area, below the filter line.
+func (m libraryModel) tableHeight() int {
+	return max(3, m.height-1)
+}
+
+// syncCursor keeps the detail panel pointed at the row under the cursor.
+func (m *libraryModel) syncCursor() {
+	b := m.current()
+	if b == nil {
+		m.detail.setBook(nil, "", 0, false)
+		return
+	}
+	pct, ok := m.readPct[b.Path]
+	m.detail.setBook(b, m.syncState[b.Path], pct, ok)
 }
 
 func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, tea.Cmd) {
@@ -189,14 +227,17 @@ func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, te
 		if m.cursor >= len(m.books) {
 			m.cursor = max(0, len(m.books)-1)
 		}
+		m.syncCursor()
 		return m, tea.Batch(m.computeSyncState(), m.loadProgress())
 
 	case syncStateMsg:
 		m.syncState = msg.state
+		m.syncCursor()
 		return m, nil
 
 	case readPctMsg:
 		m.readPct = msg.pct
+		m.syncCursor()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -232,6 +273,20 @@ func (m libraryModel) updateFilter(ctx context.Context, msg tea.KeyMsg) (library
 
 func (m libraryModel) updateNormal(ctx context.Context, msg tea.KeyMsg) (libraryModel, tea.Cmd) {
 	switch {
+	case key.Matches(msg, m.keys.Detail):
+		m.detail.visible = !m.detail.visible
+		m.setSize(m.width, m.height)
+		m.syncCursor()
+		if m.detail.visible {
+			return m, setStatus("details shown — i to hide")
+		}
+		return m, setStatus("details hidden — i to show")
+
+	case key.Matches(msg, m.keys.DetailUp), key.Matches(msg, m.keys.DetailDown):
+		var cmd tea.Cmd
+		m.detail, cmd = m.detail.Update(msg)
+		return m, cmd
+
 	case key.Matches(msg, m.keys.Filter):
 		m.filtering = true
 		m.filter.Focus()
@@ -328,6 +383,8 @@ func (m *libraryModel) moveCursor(delta int) {
 	if m.offset < 0 {
 		m.offset = 0
 	}
+
+	m.syncCursor()
 }
 
 // extendVisual keeps the visual range in step with the cursor.
@@ -363,7 +420,7 @@ func (m libraryModel) selectedBooks() []*library.Book {
 }
 
 func (m libraryModel) visibleRows() int {
-	rows := m.height - 3 // header, filter line, padding
+	rows := m.tableHeight() - 2 // column header and its rule
 	if rows < 1 {
 		return 1
 	}
@@ -390,14 +447,32 @@ func (m libraryModel) hint() string {
 }
 
 func (m libraryModel) View() string {
+	table := m.tableView()
+
+	panel := m.detail.View()
+	if panel == "" {
+		return table
+	}
+
+	// The panel is a fixed-width column beside the table rather than an overlay,
+	// so nothing the table shows is ever hidden behind it.
+	return lipgloss.JoinHorizontal(lipgloss.Top, table, " ", panel)
+}
+
+// tableView renders the filter line and the book rows.
+func (m libraryModel) tableView() string {
+	width := m.tableWidth()
 	var b strings.Builder
 
-	// Filter line.
-	if m.filtering {
+	switch {
+	case m.filtering:
 		b.WriteString(m.filter.View())
-	} else if m.query != "" {
+	case m.query != "":
 		b.WriteString(m.styles.Accent.Render("/" + m.query))
-	} else {
+		if n := len(m.books); n > 0 {
+			b.WriteString(m.styles.Subtle.Render(fmt.Sprintf("  %d matching", n)))
+		}
+	default:
 		b.WriteString(m.styles.Subtle.Render("/ to filter"))
 	}
 	b.WriteString("\n")
@@ -412,7 +487,7 @@ func (m libraryModel) View() string {
 	}
 
 	cols := m.columns()
-	b.WriteString(m.styles.Header.Render(
+	b.WriteString(m.styles.Header.Width(width).Render(
 		m.renderRow(cols, "", "TITLE", "AUTHOR", "SERIES", "SIZE", "READ")))
 	b.WriteString("\n")
 
@@ -447,11 +522,13 @@ func (m libraryModel) View() string {
 			m.styles.GlyphStyle(glyph).Render(glyph)+marker,
 			book.DisplayTitle(), book.DisplayAuthor(), series, humanSize(book.Size), read)
 
+		// Styled to the full table width so the cursor highlight reads as a
+		// bar across the row rather than stopping at the last character.
 		switch {
 		case i == m.cursor:
-			line = m.styles.Cursor.Render(line)
+			line = m.styles.Cursor.Width(width).Render(line)
 		case m.selected[book.Path]:
-			line = m.styles.Selected.Render(line)
+			line = m.styles.Selected.Width(width).Render(line)
 		}
 		b.WriteString(line)
 		if i < end-1 {
@@ -465,7 +542,7 @@ func (m libraryModel) View() string {
 // columns computes column widths for the current terminal width.
 func (m libraryModel) columns() []int {
 	// state(2) title author series size [read]
-	avail := m.width - 2 - 4 // glyph+marker, gutters
+	avail := m.tableWidth() - 2 - 4 // glyph+marker, gutters
 	if avail < 30 {
 		avail = 30
 	}

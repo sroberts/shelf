@@ -1,6 +1,7 @@
-shelf    Library    Devices    Sync
-
+shelf    1 Library    2 Devices    3 Sync                                              no device
+  4 books · 4 authors · 1 series · 24.8 MB
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
  No sync in progress.
  select books in the library and press s
 
- k/↑ up • j/↓ down • / filter • space toggle selection • s sync selection • tab next screen • ? help • q quit
+ k/↑ up • j/↓ down • / filter • space toggle selection • i toggle details • s sync selection • ? help • q quit

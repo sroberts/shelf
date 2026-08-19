@@ -26,6 +26,17 @@ type Styles struct {
 	Subtle  lipgloss.Style
 	Accent  lipgloss.Style
 
+	// Header
+	Rule      lipgloss.Style
+	StatValue lipgloss.Style
+	StatLabel lipgloss.Style
+
+	// Detail panel
+	Panel        lipgloss.Style
+	DetailTitle  lipgloss.Style
+	DetailAuthor lipgloss.Style
+	Chip         lipgloss.Style
+
 	Box      lipgloss.Style
 	Progress lipgloss.Style
 	Help     lipgloss.Style
@@ -81,6 +92,20 @@ func DefaultStyles() Styles {
 		Error:   lipgloss.NewStyle().Foreground(errorCol),
 		Subtle:  lipgloss.NewStyle().Foreground(subtle),
 		Accent:  lipgloss.NewStyle().Foreground(accent),
+
+		// The rule under the header is drawn rather than bordered, so it spans
+		// the full width regardless of what the two lines above it contain.
+		Rule:      lipgloss.NewStyle().Foreground(border),
+		StatValue: lipgloss.NewStyle().Bold(true).Foreground(headerCol),
+		StatLabel: lipgloss.NewStyle().Foreground(subtle),
+
+		Panel: lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).BorderForeground(border).
+			Padding(0, 1),
+		DetailTitle:  lipgloss.NewStyle().Bold(true).Foreground(headerCol),
+		DetailAuthor: lipgloss.NewStyle().Foreground(subtle),
+		Chip: lipgloss.NewStyle().
+			Foreground(accent).Background(selBg).Padding(0, 1),
 
 		Box: lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).BorderForeground(border).

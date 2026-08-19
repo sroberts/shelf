@@ -28,6 +28,11 @@ type KeyMap struct {
 	SelectAll key.Binding
 	ClearSel  key.Binding
 
+	// Detail panel
+	Detail     key.Binding
+	DetailUp   key.Binding
+	DetailDown key.Binding
+
 	// Actions
 	Filter  key.Binding
 	Sync    key.Binding
@@ -107,6 +112,19 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("A", "clear selection"),
 		),
 
+		Detail: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "toggle details"),
+		),
+		DetailUp: key.NewBinding(
+			key.WithKeys("shift+up"),
+			key.WithHelp("⇧↑", "scroll details"),
+		),
+		DetailDown: key.NewBinding(
+			key.WithKeys("shift+down"),
+			key.WithHelp("⇧↓", "scroll details"),
+		),
+
 		Filter: key.NewBinding(
 			key.WithKeys("/"),
 			key.WithHelp("/", "filter"),
@@ -145,7 +163,7 @@ func DefaultKeyMap() KeyMap {
 
 // ShortHelp is the one-line help strip.
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Filter, k.Select, k.Sync, k.NextScreen, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Filter, k.Select, k.Detail, k.Sync, k.Help, k.Quit}
 }
 
 // FullHelp is the expanded help, grouped by column.
@@ -154,7 +172,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Top, k.Bottom, k.PageUp, k.PageDown},
 		{k.NextScreen, k.PrevScreen, k.Library, k.Devices, k.SyncScreen},
 		{k.Select, k.VisualSel, k.SelectAll, k.ClearSel, k.Filter},
-		{k.Sync, k.SyncAll, k.Refresh, k.Confirm, k.Cancel},
-		{k.Help, k.Quit},
+		{k.Detail, k.DetailUp, k.DetailDown, k.Refresh},
+		{k.Sync, k.SyncAll, k.Confirm, k.Cancel, k.Help, k.Quit},
 	}
 }

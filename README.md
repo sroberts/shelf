@@ -76,8 +76,13 @@ shown.
 
 Run `shelf` with no arguments. Vim keys, `?` for help, `tab` to cycle screens.
 
+- **Header** — always on screen: how many books, authors, series, and tags the library holds, how
+  much disk it takes, and how it stands against the active device.
 - **Library** — filter with `/`, select with `space` or `v`, sync with `s`. A glyph column shows
-  each book's sync state against the active device.
+  each book's sync state against the active device, and a panel on the right carries everything the
+  table has no room for: cover, tags, publisher, identifiers, reading position, and the path on
+  disk. `i` hides it; below 90 columns it hides itself, because under that the title column loses
+  more than the panel adds.
 - **Devices** — live status: model, firmware, mode, signal, free heap, uptime.
 - **Sync** — plan preview, confirmation, then live progress driven by the device's own frames.
 

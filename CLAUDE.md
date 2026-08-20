@@ -12,7 +12,8 @@ anything in `internal/device` or `internal/sync`.
 ## Commands
 
 ```sh
-go build ./...
+go build -o shelf ./cmd/shelf            # the actual binary
+go build ./...                           # compile check only — writes no binary
 go vet ./...
 go test ./...
 go test -race ./...                      # what CI runs
@@ -51,7 +52,8 @@ back the other way; the device is a dumb, path-stable target.
 - `internal/kosync` — KOReader progress sync: document ids, store, and an embedded server.
 - `internal/opds` — the library published as an OPDS 1.2 catalog, served by `shelf serve`.
 - `internal/sync` — manifest, planner, executor.
-- `internal/tui` — Bubble Tea frontend over the same internal API the CLI uses.
+- `internal/tui` — Bubble Tea frontend over the same internal API the CLI uses. `header.go` is the
+  always-visible library summary, `detail.go` the right-hand panel for the book under the cursor.
 - `cmd/shelf` — flag parsing and dispatch. Bare `shelf` opens the TUI.
 
 ### The three invariants
@@ -99,6 +101,15 @@ run does. Keep it that way: if you need something in the planner, add it to `Inp
 `internal/device` tests run against a fake device (`fakedevice_test.go`) and a fake WebSocket peer
 replaying every documented `ERROR:` string. Golden TUI frames compare ANSI-stripped output, since
 color depends on terminal detection and would fail in CI for reasons unrelated to layout.
+
+Two things the golden frames must stay free of, both learned the hard way. Fixture books carry an
+explicit `AddedUnix` (`goldenAdded`), because `Upsert` stamps `time.Now()` on a zero value and the
+detail panel prints the date — without it the frames encode the day they were generated and fail at
+the next midnight. And `TestMain` pins `time.Local` to UTC, because that same date renders one day
+earlier west of Greenwich and the frames would only pass on the machine that wrote them. The
+detail panel also defaults to `GraphicsNone`; cover art is opted into by the root model after
+terminal detection, so a CI terminal that happens to support sixel cannot inject escape sequences
+into a frame.
 
 ## Conventions
 

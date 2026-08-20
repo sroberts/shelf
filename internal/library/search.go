@@ -217,6 +217,59 @@ func (db *DB) groupCounts(q string) ([]GroupCount, error) {
 	return out, rows.Err()
 }
 
+// Stats summarises the whole library.
+//
+// One call rather than five, because the TUI header redraws on every keystroke
+// and a header that costs a round of separate queries per frame is a header
+// that makes scrolling feel slow.
+type Stats struct {
+	Books   int            `json:"books"`
+	Authors int            `json:"authors"`
+	Series  int            `json:"series"`
+	Tags    int            `json:"tags"`
+	Bytes   int64          `json:"bytes"`
+	Formats map[Format]int `json:"formats"`
+}
+
+// Stats computes the library summary.
+func (db *DB) Stats() (Stats, error) {
+	s := Stats{Formats: map[Format]int{}}
+
+	// COUNT(DISTINCT …) over a nullable column ignores NULL, and the empty
+	// string is filtered out separately: a book with no series is not a series
+	// called "".
+	err := db.sql.QueryRow(`
+SELECT
+  count(*),
+  coalesce(sum(size), 0),
+  count(DISTINCT CASE WHEN author_sort  != '' THEN author_sort END),
+  count(DISTINCT CASE WHEN series != '' THEN series END)
+FROM books`).Scan(&s.Books, &s.Bytes, &s.Authors, &s.Series)
+	if err != nil {
+		return s, fmt.Errorf("library stats: %w", err)
+	}
+
+	if err := db.sql.QueryRow(`SELECT count(DISTINCT tag) FROM tags`).Scan(&s.Tags); err != nil {
+		return s, fmt.Errorf("library stats: count tags: %w", err)
+	}
+
+	rows, err := db.sql.Query(`SELECT format, count(*) FROM books GROUP BY format`)
+	if err != nil {
+		return s, fmt.Errorf("library stats: count formats: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var f Format
+		var n int
+		if err := rows.Scan(&f, &n); err != nil {
+			return s, err
+		}
+		s.Formats[f] = n
+	}
+	return s, rows.Err()
+}
+
 // Duplicates returns groups of books that share a content hash.
 //
 // The index deliberately allows the same file to exist at several paths, so

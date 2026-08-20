@@ -104,8 +104,13 @@ shown.
 
 Run `shelf` with no arguments. Vim keys, `?` for help, `tab` to cycle screens.
 
+- **Header** — always on screen: how many books, authors, series, and tags the library holds, how
+  much disk it takes, and how it stands against the active device.
 - **Library** — filter with `/`, select with `space` or `v`, sync with `s`. A glyph column shows
-  each book's sync state against the active device.
+  each book's sync state against the active device, and a panel on the right carries everything the
+  table has no room for: cover, tags, publisher, identifiers, reading position, and the path on
+  disk. `i` hides it; below 90 columns it hides itself, because under that the title column loses
+  more than the panel adds.
 - **Devices** — live status: model, firmware, mode, signal, free heap, uptime.
 - **Sync** — plan preview, confirmation, then live progress driven by the device's own frames.
 
@@ -144,9 +149,17 @@ Requires Go 1.25 or newer (a floor set by `modernc.org/sqlite`). No cgo, so
 cross-compiling is trivial.
 
 ```sh
-go build ./...
+go build -o shelf ./cmd/shelf   # the binary
 go test ./...
 ```
+
+`go build ./...` on its own compiles every package and discards the result — it is a compile
+check, not a build, and leaves no executable behind. `go install github.com/sroberts/shelf/cmd/shelf@latest`
+works too.
+
+`shelf version` reports what a binary actually is, taken from the build info the toolchain stamps
+in rather than from `-ldflags`: a module version when installed by version, and otherwise the VCS
+revision plus whether the working tree was dirty when it was built.
 
 ## A firmware hazard worth knowing
 

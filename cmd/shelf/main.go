@@ -48,6 +48,7 @@ func commands() []*command {
 		cmdServe,
 		cmdUser,
 		cmdDoctor,
+		cmdVersion,
 	}
 }
 

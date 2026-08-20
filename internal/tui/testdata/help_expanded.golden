@@ -1,17 +1,22 @@
-shelf    Library    Devices    Sync
-
- / to filter
-    TITLE                                      AUTHOR                  SERIES                  SIZE
+shelf    1 Library    2 Devices    3 Sync                                              no device
+  4 books · 4 authors · 1 series · 24.8 MB
  ──────────────────────────────────────────────────────────────────────────────────────────────────
- ·  A Wizard of Earthsea                       Ursula K. Le Guin       Earthsea #1           1.3 KB
- ·  Moby-Dick                                  Herman Melville                              23.7 MB
- ·  The Exceedingly Long Title That Will Cert… Verbose, A.                                   4.0 KB
- ·  海辺のカフカ                               村上 春樹                                     1.1 MB
+ / to filter                                                        ╭─────────────────────────────╮
+    TITLE                    AUTHOR          SERIES            SIZE │ A Wizard of Earthsea        │
+ ────────────────────────────────────────────────────────────────── │ Ursula K. Le Guin           │
+ ·  A Wizard of Earthsea     Ursula K. Le G… Earthsea #1     1.3 KB │ Earthsea #1                 │
+ ·  Moby-Dick                Herman Melville                23.7 MB │                             │
+ ·  The Exceedingly Long Ti… Verbose, A.                     4.0 KB │ FORMAT  EPUB                │
+ ·  海辺のカフカ             村上 春樹                       1.1 MB │ SIZE    1.3 KB              │
+                                                                    │ ADDED   2024-01-15          │
+                                                                    │                             │
+                                                                    │ /lib/earthsea.epub          │
+                                                                    ╰─────────────────────────────╯
  4 books — space to select, s to sync, / to filter
 
- k/↑    up           tab  next screen    space toggle selection    s     sync selection     ? help
- j/↓    down         ⇧tab prev screen    v     visual select       S     sync everything    q quit
- g      top          1    library        a     select all          r     refresh
- G      bottom       2    devices        A     clear selection     enter confirm
- ctrl+u page up      3    sync           /     filter              esc   cancel
+ k/↑    up           tab  next screen    space toggle selection    i  toggle details …
+ j/↓    down         ⇧tab prev screen    v     visual select       ⇧↑ scroll details
+ g      top          1    library        a     select all          ⇧↓ scroll details
+ G      bottom       2    devices        A     clear selection     r  refresh
+ ctrl+u page up      3    sync           /     filter
  ctrl+d page down

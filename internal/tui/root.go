@@ -18,8 +18,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/library"
@@ -58,10 +58,14 @@ type App struct {
 
 // Model is the root tea.Model.
 type Model struct {
-	app    *App
-	keys   KeyMap
-	styles Styles
-	help   help.Model
+	app     *App
+	keys    KeyMap
+	styles  Styles
+	help    help.Model
+	spinner spinner.Model
+
+	// stats feeds the header. Recomputed after any load rather than per frame.
+	stats library.Stats
 
 	screen  Screen
 	width   int
@@ -93,15 +97,22 @@ func New(ctx context.Context, app *App) Model {
 	h := help.New()
 	h.ShowAll = false
 
+	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
+	sp.Style = styles.Accent
+
+	lib := newLibraryModel(app, keys, styles)
+	lib.detail.graphics = DetectGraphics(app.Config.UI.Graphics)
+
 	return Model{
 		app:     app,
 		keys:    keys,
 		styles:  styles,
 		help:    h,
+		spinner: sp,
 		screen:  ScreenLibrary,
 		ctx:     ctx,
 		cancel:  cancel,
-		library: newLibraryModel(app, keys, styles),
+		library: lib,
 		devices: newDevicesModel(app, keys, styles),
 		sync:    newSyncModel(app, keys, styles),
 	}
@@ -112,6 +123,8 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.library.load(m.ctx),
 		m.devices.probe(m.ctx),
+		m.loadStats(),
+		m.spinner.Tick,
 	)
 }
 
@@ -152,6 +165,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = string(msg)
 		m.err = nil
 		return m, nil
+
+	case statsMsg:
+		m.stats = msg.stats
+		return m, nil
+
+	case spinner.TickMsg:
+		// The spinner animates only while something is actually in flight, so
+		// an idle shelf does not redraw the screen ten times a second.
+		if !m.sync.running() && !m.library.loading {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	case errMsg:
 		m.err = msg.err
@@ -286,12 +313,12 @@ func (m Model) indexOfScreen() int {
 
 // propagateSize gives each child its content area.
 func (m *Model) propagateSize() {
-	// Chrome: tab bar (2 lines incl. margin), status line, help.
+	// Chrome: header (tabs, summary, rule), status line, help.
 	helpHeight := 1
 	if m.showAll {
-		helpHeight = 6
+		helpHeight = 7
 	}
-	contentHeight := m.height - 2 - 1 - helpHeight - 1
+	contentHeight := m.height - 3 - 1 - helpHeight - 1
 	if contentHeight < 3 {
 		contentHeight = 3
 	}
@@ -315,7 +342,7 @@ func (m Model) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(m.tabBar())
+	b.WriteString(m.header())
 	b.WriteString("\n")
 	b.WriteString(m.body())
 	b.WriteString("\n")
@@ -324,25 +351,6 @@ func (m Model) View() string {
 	b.WriteString(m.styles.Help.Render(m.help.View(m.keys)))
 
 	return m.styles.App.Render(b.String())
-}
-
-func (m Model) tabBar() string {
-	var tabs []string
-	for _, s := range screens {
-		label := s.String()
-		if s == ScreenSync && m.sync.running() {
-			label += " ⟳"
-		}
-		if s == m.screen {
-			tabs = append(tabs, m.styles.TabActive.Render(label))
-		} else {
-			tabs = append(tabs, m.styles.TabIdle.Render(label))
-		}
-	}
-
-	bar := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
-	title := m.styles.Title.Render("shelf")
-	return m.styles.TabBar.Render(lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", bar))
 }
 
 func (m Model) body() string {

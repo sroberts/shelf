@@ -40,7 +40,12 @@ Everything Calibre gets wrong that this fixes: no library database that owns you
 
 - Rendering or reading books in the terminal
 - DRM handling of any kind
-- OPDS server (the device can already browse OPDS; run `calibre-web` or `kavita` if you want one)
+- ~~OPDS server (the device can already browse OPDS; run `calibre-web` or `kavita` if you want one)~~
+  — **built in M6.** The reasoning above was that the device can already browse OPDS, so pointing
+  it at an existing server costs nothing. That turned out to be backwards: the index, the search
+  syntax, the shelves, and the accounts all already exist here, and `internal/opds` is a few
+  hundred lines over them. Deploying calibre-web beside shelf to publish the library shelf already
+  has indexed is the larger dependency, not the smaller one.
 - Windows support
 - Multi-user or networked library
 

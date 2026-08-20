@@ -8,20 +8,30 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/kosync"
+	"github.com/sroberts/shelf/internal/opds"
 )
 
 var cmdServe = &command{
 	name:    "serve",
-	summary: "run the reading-progress sync server",
-	usage:   "serve [--kosync ADDR] [--no-registration] [--verbose]",
+	summary: "run the sync and OPDS catalog server",
+	usage:   "serve [--listen ADDR] [--no-registration] [--no-opds] [--open-catalog] [--verbose]",
 	run: func(ctx context.Context, a *app, args []string) error {
 		fs := newFlagSet("serve")
-		addr := fs.String("kosync", "", "address to listen on (default: from config)")
+		addr := fs.String("listen", "", "address to listen on (default: from config)")
+		// Kept because it is what the flag was called before OPDS shared the
+		// listener, and a flag that silently stops working is worse than one
+		// that outlives its name.
+		legacyAddr := fs.String("kosync", "", "deprecated alias for --listen")
 		noRegistration := fs.Bool("no-registration", false,
 			"refuse new account creation (set this once your reader is registered)")
+		noOPDS := fs.Bool("no-opds", false, "do not serve the OPDS catalog")
+		openCatalog := fs.Bool("open-catalog", false,
+			"serve the OPDS catalog without a password")
 		verbose := fs.Bool("verbose", false, "log every request")
 		if err := parseFlags(fs, args); err != nil {
 			return err
@@ -35,6 +45,9 @@ var cmdServe = &command{
 			return err
 		}
 
+		if *addr == "" {
+			*addr = *legacyAddr
+		}
 		if *addr == "" {
 			*addr = cfg.Kosync.Listen
 		}
@@ -57,9 +70,51 @@ var cmdServe = &command{
 		srv := kosync.NewServer(store, logger)
 		srv.AllowRegistration = !*noRegistration
 
+		// Both services share one listener so the reader needs a single
+		// address for progress sync and for browsing. The mux below routes
+		// /opds to the catalog and everything else to kosync, which owns the
+		// root help page.
+		handler := srv.Handler()
+		var catalogPath string
+
+		if !*noOPDS && !cfg.OPDS.Disabled {
+			db, err := a.index()
+			if err != nil {
+				return err
+			}
+
+			catalog := opds.NewCatalog(db, catalogTitle(cfg))
+			if cfg.OPDS.PageSize > 0 {
+				catalog.PageSize = cfg.OPDS.PageSize
+			}
+
+			catalogSrv := opds.NewServer(catalog, logger)
+			if !*openCatalog && !cfg.OPDS.Anonymous {
+				catalogSrv.Auth = store
+			}
+
+			root := http.NewServeMux()
+			root.Handle("/opds", catalogSrv.Handler())
+			root.Handle("/opds/", catalogSrv.Handler())
+			root.Handle("/", handler)
+			handler = root
+			catalogPath = "/opds"
+		} else {
+			// Say the catalog is off rather than letting kosync's catch-all
+			// root handler answer /opds with its plain-text help page. An OPDS
+			// client that asks for a feed and gets prose reports a parse
+			// error, which points at the feed rather than at the switch that
+			// turned it off.
+			root := http.NewServeMux()
+			root.HandleFunc("/opds", catalogDisabled)
+			root.HandleFunc("/opds/", catalogDisabled)
+			root.Handle("/", handler)
+			handler = root
+		}
+
 		httpSrv := &http.Server{
 			Addr:              *addr,
-			Handler:           srv.Handler(),
+			Handler:           handler,
 			ReadHeaderTimeout: 10 * time.Second,
 			// The device is on Wi-Fi and can be slow; these are generous but
 			// still bounded, so a stalled connection cannot hold a slot open
@@ -74,7 +129,7 @@ var cmdServe = &command{
 			return fmt.Errorf("listen on %s: %w", *addr, err)
 		}
 
-		printServerBanner(ln.Addr(), store.Path(), srv.AllowRegistration)
+		printServerBanner(ln.Addr(), store.Path(), srv.AllowRegistration, catalogPath)
 
 		errCh := make(chan error, 1)
 		go func() {
@@ -103,14 +158,18 @@ var cmdServe = &command{
 // The device needs an address it can reach, so localhost is useless to it. The
 // LAN addresses are printed explicitly because working that out by hand is the
 // most likely place for someone to get stuck.
-func printServerBanner(addr net.Addr, storePath string, registration bool) {
+func printServerBanner(addr net.Addr, storePath string, registration bool, catalogPath string) {
 	port := "8080"
 	if tcp, ok := addr.(*net.TCPAddr); ok {
 		port = fmt.Sprint(tcp.Port)
 	}
 
-	fmt.Printf("kosync server listening on %s\n", addr)
-	fmt.Printf("progress store: %s\n\n", storePath)
+	fmt.Printf("shelf server listening on %s\n", addr)
+	fmt.Printf("progress store: %s\n", storePath)
+	if catalogPath == "" {
+		fmt.Println("OPDS catalog: disabled")
+	}
+	fmt.Println()
 
 	hosts := lanAddresses()
 	if len(hosts) == 0 {
@@ -120,6 +179,13 @@ func printServerBanner(addr net.Addr, storePath string, registration bool) {
 		fmt.Println("On the reader, set the KOReader sync server to:")
 		for _, h := range hosts {
 			fmt.Printf("    http://%s:%s\n", h, port)
+		}
+		if catalogPath != "" {
+			fmt.Println("\nAnd add an OPDS catalog pointing at:")
+			for _, h := range hosts {
+				fmt.Printf("    http://%s:%s%s\n", h, port, catalogPath)
+			}
+			fmt.Println("The catalog takes the same username and password.")
 		}
 	}
 
@@ -162,4 +228,24 @@ func lanAddresses() []string {
 		}
 	}
 	return out
+}
+
+// catalogTitle names the catalog the reader will see in its server list.
+//
+// Falls back to the library directory's own name rather than a generic "shelf",
+// because the device shows this string in a list that may hold several servers
+// and "shelf" tells you nothing about which machine answered.
+func catalogTitle(cfg *config.Config) string {
+	if cfg.OPDS.Title != "" {
+		return cfg.OPDS.Title
+	}
+	if base := filepath.Base(cfg.LibraryRoot); base != "" && base != "." && base != string(filepath.Separator) {
+		return base
+	}
+	return "shelf"
+}
+
+// catalogDisabled answers /opds when the catalog is switched off.
+func catalogDisabled(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, "OPDS catalog is disabled on this server", http.StatusNotFound)
 }

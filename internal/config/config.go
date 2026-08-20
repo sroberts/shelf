@@ -43,6 +43,7 @@ type Config struct {
 
 	UI      UI       `toml:"ui"`
 	Kosync  Kosync   `toml:"kosync"`
+	OPDS    OPDS     `toml:"opds"`
 	Devices []Device `toml:"device"`
 	Convert Convert  `toml:"convert"`
 	Sync    Sync     `toml:"sync"`
@@ -80,6 +81,20 @@ type Kosync struct {
 	User string `toml:"user"`
 	// Listen is the default address for `shelf serve`.
 	Listen string `toml:"listen"`
+}
+
+// OPDS configures the catalog served by `shelf serve`.
+type OPDS struct {
+	// Title names the catalog in the reader's server list and in every feed.
+	Title string `toml:"title"`
+	// PageSize is how many entries a feed carries. Clamped to what the
+	// firmware's parser will actually read; see internal/opds/compat.go.
+	PageSize int `toml:"page_size"`
+	// Anonymous serves the catalog without a password. Off by default: the
+	// listener binds to every interface, and the accounts already exist.
+	Anonymous bool `toml:"anonymous"`
+	// Disabled turns the catalog off, leaving progress sync running.
+	Disabled bool `toml:"disabled"`
 }
 
 // Convert configures the conversion pipeline.

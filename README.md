@@ -16,8 +16,9 @@ derived cache you can delete at any time.
 
 ## Status
 
-M0–M5 are implemented and tested. M0–M4 are verified against real hardware (an X4 on firmware
-1.4.1); M5's device round trip is not yet confirmed — see below.
+M0–M6 are implemented and tested. M0–M4 are verified against real hardware (an X4 on firmware
+1.4.1). The M5 and M6 device round trips are not yet confirmed — the OPDS catalog is verified
+against a port of the firmware's own feed parser rather than against the panel.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -27,6 +28,7 @@ M0–M5 are implemented and tested. M0–M4 are verified against real hardware (
 | M3 | Terminal interface: library, devices, sync | done |
 | M4 | PDF conversion and device-targeted optimization | done |
 | M5 | Reading-progress sync, client and embedded server | done |
+| M6 | OPDS catalog served from `shelf serve` | done |
 
 The SD-card transport, WebDAV, and mDNS discovery are designed in `spec.md` but not yet built. The spec's Settings screen is blocked upstream — see the firmware
 note below.
@@ -47,6 +49,32 @@ as "Authentication failed". Creating the account here removes that ambiguity. `s
 server picks up the change on the next request, with no restart. Once your accounts exist, run
 the server with `--no-registration`. Set `[kosync] user` in the config and `shelf ls` grows a
 READ column.
+
+## Browsing the library from the reader
+
+`shelf serve` also publishes the library as an OPDS catalog, on the same address and the same
+account, so the reader can pull a book over Wi-Fi without a sync run:
+
+```
+http://<this-machine>:8080/opds
+```
+
+Add it under the reader's OPDS settings. You get the whole library, recently added, and browse by
+author, series, tag, and shelf, with search wired to the same query syntax as `shelf ls`. Any
+other OPDS client works too — Panels, KOReader, Thorium.
+
+Two limits are the firmware's rather than shelf's, and are worth knowing before they surprise you:
+
+- **Only EPUBs are downloadable on CrossPoint.** Its acquisition check is an exact string match on
+  `application/epub+zip`, so PDF, TXT, and XTC entries are parsed and then ignored. They are still
+  advertised with their real types, because other clients take them — shelf will not mislabel a
+  PDF to sneak it past.
+- **A book pulled over OPDS is not tracked in the sync manifest.** The firmware picks the
+  filename and folder, so the file is not at shelf's pinned path and `shelf sync --prune` sees it
+  as an orphan. Pick one route per book, or leave `--prune` off.
+
+`--open-catalog` drops the password, `--no-opds` turns the catalog off entirely, and the `[opds]`
+config section sets a title, a page size, and either switch permanently.
 
 If the reader reports an authentication failure, check the scheme first. shelf serves plain
 HTTP; an `https://` URL fails the TLS handshake before any credentials are read, and the device
@@ -102,6 +130,8 @@ shelf meta BOOK [--set FIELD=VALUE]     show or edit metadata, in place
 shelf import FILE... [--move|--link]    add files to the library
 shelf shelf create|ls|rm|show|add       manage shelves
 shelf devices [--discover]              find and inspect devices
+shelf user add|ls|rm|passwd NAME        manage sync and catalog accounts
+shelf serve [--no-opds] [--open-catalog] run progress sync and the OPDS catalog
 shelf sync [SHELF] [--dry-run]          send a shelf to a device
 shelf push FILE... --to /Books          upload directly
 shelf pull PATH... [--out DIR]          download from a device

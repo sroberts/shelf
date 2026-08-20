@@ -50,6 +50,7 @@ back the other way; the device is a dumb, path-stable target.
 - `internal/device` — HTTP client, discovery, WebSocket upload, firmware gating.
 - `internal/convert` — PDF to EPUB, compiled in, cached and quality-assessed.
 - `internal/kosync` — KOReader progress sync: document ids, store, and an embedded server.
+- `internal/opds` — the library published as an OPDS 1.2 catalog, served by `shelf serve`.
 - `internal/sync` — manifest, planner, executor.
 - `internal/tui` — Bubble Tea frontend over the same internal API the CLI uses. `header.go` is the
   always-visible library summary, `detail.go` the right-hand panel for the book under the cursor.
@@ -191,10 +192,55 @@ be managed whether or not `shelf serve` is up. WAL mode plus the store's busy ti
 concurrent access safe, and the server sees a new account on its next request — restarting it is
 never necessary. `TestStoreToleratesASecondConnection` pins this.
 
+### The OPDS catalog answers to the firmware's parser, not to the spec
+
+`internal/opds/compat.go` is the contract, and every constant in it is read off
+`lib/OpdsParser/OpdsParser.cpp` rather than out of the OPDS specification. Where they disagree the
+firmware wins, because it is the client that has to render the feed. Four of those disagreements
+are load-bearing:
+
+- **62 entries per feed, maximum.** `MAX_ENTRIES = ENTRY_STORAGE_CAPACITY - 2`. Past it the parser
+  stops collecting and sets a truncation flag the UI does not surface, so an oversized page does
+  not fail — it silently drops books. `pageSize()` clamps rather than trusting its caller, and
+  `TestPageSizeNeverExceedsWhatTheFirmwareReads` pins it.
+- **`rel="search"` carries the `{searchTerms}` template inline.** Standard OPDS points that
+  relation at an OpenSearch description document; the firmware never fetches one. Both links are
+  emitted, and they coexist because the firmware only takes an href containing the placeholder.
+- **Every href is an absolute path.** `UrlUtils::buildUrl` is not RFC 3986 relative resolution — it
+  appends a relative href to the whole base rather than replacing the last segment, so a relative
+  link means two different URLs depending on who reads it. A leading `/` is the one form both
+  agree on.
+- **The acquisition type is an exact `strcmp` against `application/epub+zip`.** No parameters, no
+  prefix match. PDF and TXT entries are therefore invisible on CrossPoint; they are still
+  advertised with their real types for other clients rather than mislabelled to sneak them past.
+
+Field limits (title 160, author 120, id 128, href 768) are **byte** bounds applied to a
+`std::string`, so the firmware will cut a multi-byte character in half. `truncateUTF8` truncates on
+a rune boundary first so the device never has to.
+
+`firmware_test.go` is a Go port of that parser, kept deliberately literal so it can be diffed
+against the C++ when firmware moves. Feed tests assert what the device would *see*, not what the
+XML means — a change that keeps the feed valid but stops the reader finding books fails there.
+
+Two interactions to keep in mind. `http.ServeMux` percent-decodes `Request.PathValue` already, so
+browse values are used as-is; unescaping a second time turned an author named `100% Cotton` into an
+invalid escape and a 400. And exact-value browsing binds a SQL parameter through
+`library.SearchOptions.Filter` rather than building query text, because the query lexer ends a
+quoted string at the first matching quote with no escape — an author like `O'Brien "Bob"` cannot be
+expressed in query syntax at all.
+
+An OPDS download is **outside path pinning**. The firmware chooses the filename and folder, so the
+file is not at the manifest's path and `--prune` sees it as an orphan. Nothing in shelf reconciles
+the two routes today.
+
 ## Not built yet
 
 The SD-card transport, WebDAV, and mDNS discovery are all designed in
-`spec.md` but unimplemented. Font stripping is not implemented: dropping a font means removing its
+`spec.md` but unimplemented. The OPDS catalog serves library bytes as they are on disk, so a PDF
+is offered as a PDF: conversion on the OPDS path would make the first download of a large PDF
+block for minutes, and serving a cached artifact only when one happens to exist would make the
+behaviour depend on whether a sync had run. Managing the device's own saved catalogs through
+`GET|POST /api/opds*` is likewise not built. Font stripping is not implemented: dropping a font means removing its
 manifest item and every `@font-face` rule referencing it, and a partial job produces an EPUB
 `epubcheck` rejects. The TUI runs conversion inside its `tea.Cmd` with no progress shown, so a
 large PDF looks like a hang. The spec's Settings screen is blocked upstream by the firmware crash

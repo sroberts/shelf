@@ -472,9 +472,14 @@ Test strategy:
 | M3 | Bubble Tea shell: library, device, sync views | Full push workflow without touching the CLI |
 | M4 | Convert and optimize pipelines | PDF in, readable EPUB on device |
 | M5 | kosync client, then embedded server | Reading percentage visible in the library table |
-| M6 | Packaging | Nix flake, static `x86_64-linux` binary, `nix run` works |
+| M6 | OPDS catalog served from `shelf serve` | a reader browses the catalog and downloads from it |
+| M7 | Packaging | Nix flake, static `x86_64-linux` binary, `nix run` works |
 
 M0 through M2 are the actual product. Everything after is refinement.
+
+M0 through M6 are built. **M7 is not started** — there is no flake, no release workflow, and
+the only CI job builds rather than publishes. OPDS took the M6 number after this table was
+first written, which pushed packaging to M7; it was never dropped.
 
 ---
 

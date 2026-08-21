@@ -236,7 +236,11 @@ the two routes today.
 ## Not built yet
 
 The SD-card transport, WebDAV, and mDNS discovery are all designed in
-`spec.md` but unimplemented. The OPDS catalog serves library bytes as they are on disk, so a PDF
+`spec.md` but unimplemented. Both unbuilt transports are refused rather than ignored: `sd` at
+the sync call sites, `webdav` in `config.Validate`. WebDAV is rejected at config validation
+specifically because every path to a device builds its own client — the CLI via `deviceClient`,
+the TUI directly in `syncview.go` and `devices.go` — so a call-site guard is one the others
+route around, and the silent fallback was a sync that quietly ran over WebSocket instead. The OPDS catalog serves library bytes as they are on disk, so a PDF
 is offered as a PDF: conversion on the OPDS path would make the first download of a large PDF
 block for minutes, and serving a cached artifact only when one happens to exist would make the
 behaviour depend on whether a sync had run. Managing the device's own saved catalogs through

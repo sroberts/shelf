@@ -19,7 +19,7 @@ type Transport string
 const (
 	TransportWS     Transport = "ws"     // WebSocket on :81, the primary path
 	TransportHTTP   Transport = "http"   // POST /upload multipart
-	TransportWebDAV Transport = "webdav" // PUT; not implemented until after M2
+	TransportWebDAV Transport = "webdav" // PUT; designed in spec.md, not implemented
 	TransportSD     Transport = "sd"     // direct SD-card mount
 )
 
@@ -249,12 +249,23 @@ func (c *Config) Validate() error {
 		seen[d.Nickname] = true
 
 		switch d.Transport {
-		case TransportWS, TransportHTTP, TransportWebDAV:
+		case TransportWS, TransportHTTP:
 			// Network transports discover the host when it is not set.
 		case TransportSD:
 			if d.Mount == "" {
 				return fmt.Errorf("%s: transport \"sd\" requires mount", where)
 			}
+		case TransportWebDAV:
+			// Rejected here rather than at the call sites, because every path
+			// that reaches a device builds its own client -- the CLI through
+			// deviceClient, the TUI directly in syncview and devices. A guard
+			// in one of them is a guard the others route around.
+			//
+			// Silently falling back to the WebSocket path would be worse than
+			// refusing: the sync would appear to work while ignoring what the
+			// config asked for.
+			return fmt.Errorf(
+				"%s: the WebDAV transport is not implemented yet; use \"ws\" or \"http\"", where)
 		default:
 			return fmt.Errorf("%s: unknown transport %q", where, d.Transport)
 		}

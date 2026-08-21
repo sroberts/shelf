@@ -16,9 +16,10 @@ derived cache you can delete at any time.
 
 ## Status
 
-M0–M6 are implemented and tested. M0–M4 are verified against real hardware (an X4 on firmware
-1.4.1). The M5 and M6 device round trips are not yet confirmed — the OPDS catalog is verified
-against a port of the firmware's own feed parser rather than against the panel.
+M0–M6 are implemented and tested; M7 is not started. M0–M4 are verified against real hardware
+(an X4 on firmware 1.4.1). The M5 and M6 device round trips are not yet confirmed — the OPDS
+catalog is verified against a port of the firmware's own feed parser rather than against the
+panel.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -29,6 +30,7 @@ against a port of the firmware's own feed parser rather than against the panel.
 | M4 | PDF conversion and device-targeted optimization | done |
 | M5 | Reading-progress sync, client and embedded server | done |
 | M6 | OPDS catalog served from `shelf serve` | done |
+| M7 | Packaging: Nix flake, static binary, `nix run` | not started |
 
 The SD-card transport, WebDAV, and mDNS discovery are designed in `spec.md` but not yet built. The spec's Settings screen is blocked upstream — see the firmware
 note below.
@@ -126,8 +128,11 @@ blocks, since multiplexer passthrough is unreliable. Override with `ui.graphics`
 ```
 shelf scan [--deep] [--covers]          index the library directory
 shelf ls [QUERY] [--json] [--sort KEY]  list and search
+shelf tags [--json]                     list tags with book counts
 shelf meta BOOK [--set FIELD=VALUE]     show or edit metadata, in place
 shelf import FILE... [--move|--link]    add files to the library
+shelf convert FILE... [--out DIR]       convert a PDF to EPUB
+shelf optimize FILE... --profile NAME   rebuild an EPUB for a device panel
 shelf shelf create|ls|rm|show|add       manage shelves
 shelf devices [--discover]              find and inspect devices
 shelf user add|ls|rm|passwd NAME        manage sync and catalog accounts
@@ -136,6 +141,7 @@ shelf sync [SHELF] [--dry-run]          send a shelf to a device
 shelf push FILE... --to /Books          upload directly
 shelf pull PATH... [--out DIR]          download from a device
 shelf doctor [--offline]                check config, paths, and connectivity
+shelf version [--full]                  print the version and how it was built
 shelf --no-tui                          force CLI mode
 ```
 

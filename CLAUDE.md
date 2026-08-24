@@ -52,6 +52,14 @@ back the other way; the device is a dumb, path-stable target.
 - `internal/kosync` — KOReader progress sync: document ids, store, and an embedded server.
 - `internal/opds` — the library published as an OPDS 1.2 catalog, served by `shelf serve`.
 - `internal/sync` — manifest, planner, executor.
+- `internal/sdcard` — the same `sync.Transport` over a mounted card, for syncing without Wi-Fi.
+  The reader's USB-C is a serial console, not mass storage (the ESP32-C3 has no USB-OTG), so
+  taking the card out is the only offline path. With no firmware in between, every guard the HTTP
+  client gets for free is enforced here: protected paths, write-then-rename, ENOSPC mapped to
+  `device.ErrDiskFull` so the executor still aborts, and NFC on the walk so a Mac does not see
+  every accented book as new.
+- `internal/target` — resolves a `config.Device` to whichever transport it names, plus the label
+  used in messages. Both the CLI and the TUI go through it; neither builds a client directly.
 - `internal/tui` — Bubble Tea frontend over the same internal API the CLI uses. `header.go` is the
   always-visible library summary, `detail.go` the right-hand panel for the book under the cursor.
 - `cmd/shelf` — flag parsing and dispatch. Bare `shelf` opens the TUI.
@@ -235,12 +243,10 @@ the two routes today.
 
 ## Not built yet
 
-The SD-card transport, WebDAV, and mDNS discovery are all designed in
-`spec.md` but unimplemented. Both unbuilt transports are refused rather than ignored: `sd` at
-the sync call sites, `webdav` in `config.Validate`. WebDAV is rejected at config validation
-specifically because every path to a device builds its own client — the CLI via `deviceClient`,
-the TUI directly in `syncview.go` and `devices.go` — so a call-site guard is one the others
-route around, and the silent fallback was a sync that quietly ran over WebSocket instead. The OPDS catalog serves library bytes as they are on disk, so a PDF
+WebDAV and mDNS discovery are designed in `spec.md` but unimplemented. WebDAV is refused rather
+than ignored, in `config.Validate` — every path to a device builds its own client, so a
+call-site guard is one the others route around, and the silent fallback was a sync that quietly
+ran over WebSocket instead. The OPDS catalog serves library bytes as they are on disk, so a PDF
 is offered as a PDF: conversion on the OPDS path would make the first download of a large PDF
 block for minutes, and serving a cached artifact only when one happens to exist would make the
 behaviour depend on whether a sync had run. Managing the device's own saved catalogs through

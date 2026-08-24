@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/sroberts/shelf/internal/library"
+	"github.com/sroberts/shelf/internal/target"
 )
 
 var cmdShelf = &command{
@@ -295,9 +296,9 @@ var cmdDoctor = &command{
 		}
 		for _, d := range cfg.Devices {
 			host := d.Host
-			if host == "" {
-				host = "(discovery)"
-			}
+			// Label rather than the raw host: an SD device has no host, and
+			// printing "(discovery)" for a card is actively misleading.
+			host = target.Label(d)
 			fmt.Fprintf(w, "device %s\t%s transport=%s root=%s chunk=%d\n",
 				d.Nickname, host, d.Transport, d.Root, d.ChunkSize)
 

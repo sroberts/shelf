@@ -274,6 +274,18 @@ Abort conditions: disk-full error, three consecutive upload failures, device sta
 
 `--transport=sd --mount=/run/media/scott/CROSSPOINT` uses the same planner with a filesystem-backed device implementation. Same manifest, same path pinning. Rules for FAT32 targets: reject characters `<>:"/\|?*`, cap component length at 255 bytes, detect case-insensitive collisions before writing, and refuse to touch `/.crosspoint`.
 
+**Built**, in `internal/sdcard`. Two things the design above did not anticipate. Case-insensitive
+collision detection belongs in the *planner*, not the transport — it is a decision about where
+books go, it applies to the network path too, and putting it in `plan.go` keeps it a pure,
+testable function. And the transport needs a **volume identity check**: this is the one path
+where shelf writes to a filesystem the user named by hand, so a mistyped mount is one keystroke
+from a home directory. A card recording a different device UUID is refused, as is a populated
+volume with no CrossPoint markings.
+
+USB-C is not an alternative to this. The ESP32-C3 has only a USB Serial/JTAG controller and no
+USB-OTG, so mass storage cannot be implemented on it at all; the cable is a console and a
+flashing route. Removing the card is the offline path.
+
 ---
 
 ## 7. TUI design

@@ -208,7 +208,35 @@ func Build(in Input) Plan {
 	var uploads []Op
 	neededDirs := map[device.Path]bool{}
 
-	for _, book := range sortedBooks(in.Local) {
+	// claimedFold maps a case-folded destination to the local book that won
+	// it, so two books that differ only in case cannot both be planned onto
+	// what is physically one file on a FAT32 card.
+	claimedFold := map[string]string{}
+
+	// claimFold reserves a destination, or reports a collision and refuses.
+	//
+	// Skipping the loser is the conservative choice: uploading both would put
+	// the second book's bytes at the first book's pinned path, which clears
+	// the firmware's cache for a book whose reading position shelf promised to
+	// protect. A book that does not sync is recoverable; a reading position is
+	// not.
+	claimFold := func(dest device.Path, localPath string) bool {
+		key := dest.Fold()
+		if prev, taken := claimedFold[key]; taken && prev != localPath {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf(
+				"%s and %s both map to %s, and the device's card is case-insensitive; "+
+					"skipping the second -- rename one of them",
+				prev, localPath, dest))
+			return false
+		}
+		claimedFold[key] = localPath
+		return true
+	}
+
+	// Pinned books are considered first. A pinned book already occupies a path
+	// on the device and has a reading position there; a new book that folds to
+	// the same name must lose the tie, never win it.
+	for _, book := range pinnedFirst(sortedBooks(in.Local), byLocal) {
 		entry, pinned := byLocal[book.Path]
 
 		var dest device.Path
@@ -224,6 +252,9 @@ func Build(in Input) Plan {
 			if in.Options.Repath {
 				desired := in.Root.Join(book.RelPath)
 				if desired != dest {
+					if !claimFold(desired, book.Path) {
+						continue
+					}
 					plan.RepathWarnings = append(plan.RepathWarnings,
 						fmt.Sprintf("%s -> %s (loses reading position)", dest, desired))
 					uploads = append(uploads, Op{
@@ -249,6 +280,9 @@ func Build(in Input) Plan {
 			dest = in.Root.Join(book.RelPath)
 		}
 
+		if !claimFold(dest, book.Path) {
+			continue
+		}
 		claimed[dest] = true
 
 		deviceFile, onDevice := in.Device[dest]
@@ -475,6 +509,19 @@ func isShelfState(p device.Path) bool {
 }
 
 // sortedBooks returns books in a deterministic order so plans are reproducible.
+// pinnedFirst partitions books so pinned ones are considered first, keeping the
+// existing order within each group so planning stays deterministic.
+func pinnedFirst(books []LocalBook, byLocal map[string]*Entry) []LocalBook {
+	out := make([]LocalBook, len(books))
+	copy(out, books)
+	sort.SliceStable(out, func(i, j int) bool {
+		_, pi := byLocal[out[i].Path]
+		_, pj := byLocal[out[j].Path]
+		return pi && !pj
+	})
+	return out
+}
+
 func sortedBooks(books []LocalBook) []LocalBook {
 	out := make([]LocalBook, len(books))
 	copy(out, books)

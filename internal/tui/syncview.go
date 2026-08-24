@@ -16,6 +16,7 @@ import (
 	"github.com/sroberts/shelf/internal/device"
 	"github.com/sroberts/shelf/internal/library"
 	syncpkg "github.com/sroberts/shelf/internal/sync"
+	"github.com/sroberts/shelf/internal/target"
 )
 
 // syncPhase is where the sync screen is in its flow.
@@ -42,7 +43,7 @@ type syncModel struct {
 	books []*library.Book
 
 	dev      config.Device
-	client   *device.Client
+	client   target.Target
 	manifest *syncpkg.Manifest
 	plan     syncpkg.Plan
 
@@ -83,7 +84,7 @@ type (
 
 	planReadyMsg struct {
 		dev      config.Device
-		client   *device.Client
+		client   target.Target
 		manifest *syncpkg.Manifest
 		plan     syncpkg.Plan
 	}
@@ -118,33 +119,27 @@ func (m syncModel) buildPlan(ctx context.Context, books []*library.Book) tea.Cmd
 		if err != nil {
 			return errMsg{err}
 		}
-		if dev.Transport == config.TransportSD {
-			return errMsg{fmt.Errorf("the SD transport is not implemented yet")}
+		root := device.NewPath(dev.Root)
+
+		// The manifest is loaded before the target is opened, because an SD
+		// card is verified against the device UUID it records -- that is what
+		// catches a card belonging to a different reader.
+		manifestPath := cfg.Paths.DeviceStateFile(dev.Nickname)
+		manifest, err := syncpkg.LoadManifest(manifestPath, dev.Nickname, root.String())
+		if err != nil {
+			return errMsg{err}
 		}
 
-		host := dev.Host
-		if host == "" {
-			found, derr := device.Discover(ctx, 4*time.Second)
-			if derr != nil || len(found) == 0 {
-				return errMsg{fmt.Errorf("%w: no device configured or discovered",
-					device.ErrNotInTransfer)}
-			}
-			host = found[0].Host()
+		client, _, err := target.Open(ctx, dev, manifest.DeviceUUID)
+		if err != nil {
+			return errMsg{err}
 		}
 
-		client := device.New(host)
 		status, err := client.Status(ctx)
 		if err != nil {
 			return errMsg{err}
 		}
 		if err := device.CheckCompat(status); err != nil {
-			return errMsg{err}
-		}
-
-		root := device.NewPath(dev.Root)
-		manifestPath := cfg.Paths.DeviceStateFile(dev.Nickname)
-		manifest, err := syncpkg.LoadManifest(manifestPath, dev.Nickname, root.String())
-		if err != nil {
 			return errMsg{err}
 		}
 		manifest.Model, manifest.Firmware = status.Device, status.Version

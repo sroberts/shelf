@@ -10,6 +10,8 @@ import (
 
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/device"
+	"github.com/sroberts/shelf/internal/sdcard"
+	"github.com/sroberts/shelf/internal/target"
 )
 
 var cmdDevices = &command{
@@ -118,10 +120,10 @@ func listConfiguredDevices(ctx context.Context, cfg *config.Config, asJSON bool)
 		var statusErr error
 
 		if d.Transport == config.TransportSD {
-			state = "sd: " + d.Mount
-			host = d.Mount
+			host = target.Label(d)
+			state = sdState(d)
 		} else {
-			c, err := deviceClient(ctx, d)
+			c, err := target.NetworkClient(ctx, d)
 			if err != nil {
 				statusErr = err
 			} else {
@@ -174,23 +176,14 @@ func listConfiguredDevices(ctx context.Context, cfg *config.Config, asJSON bool)
 	return nil
 }
 
-// deviceClient builds a client for a configured device, discovering it when no
-// host is set.
-func deviceClient(ctx context.Context, d config.Device) (*device.Client, error) {
-	if d.Host != "" {
-		return device.New(d.Host), nil
-	}
-	return device.Resolve(ctx, "")
-}
-
 // checkDevice reports on one device for `shelf doctor`.
 func checkDevice(ctx context.Context, w *tabwriter.Writer, d config.Device) {
 	if d.Transport == config.TransportSD {
-		fmt.Fprintf(w, "device %s\tSD transport at %s%s\n", d.Nickname, d.Mount, existsNote(d.Mount))
+		checkSDCard(ctx, w, d)
 		return
 	}
 
-	c, err := deviceClient(ctx, d)
+	c, err := target.NetworkClient(ctx, d)
 	if err != nil {
 		fmt.Fprintf(w, "device %s\tunreachable: %v\n", d.Nickname, err)
 		return
@@ -228,4 +221,58 @@ func checkDevice(ctx context.Context, w *tabwriter.Writer, d config.Device) {
 		return
 	}
 	fmt.Fprintf(w, "  root %s\tok\n", root)
+}
+
+// sdState summarises a card for the devices table.
+//
+// An SD device has no status endpoint, so "reachable" means mounted and
+// plausibly the right volume. Reporting that plainly is more useful than
+// echoing back the configured mount path, which says nothing about whether the
+// card is actually in the reader.
+func sdState(d config.Device) string {
+	if d.Mount == "" {
+		return "no mount configured"
+	}
+	vol, err := sdcard.Open(d.Mount)
+	if err != nil {
+		return err.Error()
+	}
+	if err := vol.Verify(""); err != nil {
+		return "mounted, but does not look like a reader card"
+	}
+	return "SD card mounted"
+}
+
+// checkSDCard is doctor's report for a card.
+//
+// It deliberately does not print firmware, heap, signal, or uptime: there is no
+// device answering, and inventing those fields would make a card look like a
+// live reader.
+func checkSDCard(ctx context.Context, w *tabwriter.Writer, d config.Device) {
+	if d.Mount == "" {
+		fmt.Fprintf(w, "device %s\tSD transport with no mount configured\n", d.Nickname)
+		return
+	}
+
+	vol, err := sdcard.Open(d.Mount)
+	if err != nil {
+		fmt.Fprintf(w, "device %s\t%v\n", d.Nickname, err)
+		return
+	}
+	fmt.Fprintf(w, "device %s\tSD card at %s\n", d.Nickname, vol.Mount())
+
+	if err := vol.Verify(""); err != nil {
+		fmt.Fprintf(w, "  volume\t%v\n", err)
+		return
+	}
+	fmt.Fprintf(w, "  volume\tok\n")
+	fmt.Fprintf(w, "  compat\tnot applicable (no firmware in play)\n")
+
+	root := device.NewPath(d.Root)
+	files, err := vol.ListRecursive(ctx, root)
+	if err != nil {
+		fmt.Fprintf(w, "  root %s\tnot readable: %v\n", root, err)
+		return
+	}
+	fmt.Fprintf(w, "  root %s\tok (%d entries)\n", root, len(files))
 }

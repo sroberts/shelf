@@ -32,7 +32,7 @@ panel.
 | M6 | OPDS catalog served from `shelf serve` | done |
 | M7 | Packaging: Nix flake, static binary, `nix run` | not started |
 
-The SD-card transport, WebDAV, and mDNS discovery are designed in `spec.md` but not yet built. The spec's Settings screen is blocked upstream — see the firmware
+WebDAV and mDNS discovery are designed in `spec.md` but not yet built. The spec's Settings screen is blocked upstream — see the firmware
 note below.
 
 ## Reading progress
@@ -86,6 +86,38 @@ Two things to know. The protocol runs over plain HTTP and sends both `MD5(passwo
 Basic with the password itself, so use a credential that is unique and disposable. And
 `progress.db` lives under the data directory rather than the cache — unlike `index.db` it cannot
 be rebuilt, because the reader pushes positions here and keeps no synchronised copy.
+
+## Syncing without Wi-Fi
+
+The reader's USB-C port is not a data path. The ESP32-C3 exposes only a USB Serial/JTAG
+controller, so there is no mass-storage mode — plugging in a cable gives you a serial console and
+a firmware flashing route, not a volume. That is silicon, not a firmware gap.
+
+The offline route is the microSD card itself. Put it in a card reader and point shelf at the
+mount:
+
+```toml
+[[device]]
+nickname = "card"
+transport = "sd"
+mount = "/Volumes/CROSSPOINT"
+root = "/Books"
+```
+
+Everything works the same: same planner, same manifest, same path pinning, same `--dry-run`. It is
+also much faster than Wi-Fi for a first sync, which is the case it exists for — a large library
+over an ESP32-C3 radio takes a long time.
+
+With no firmware in between, shelf owns the filesystem, so it checks more before writing. It
+refuses to touch `/.crosspoint` at the lowest layer, writes each book to a temporary file and
+renames it into place so a pulled card cannot leave a half-written book that looks complete, and
+verifies the volume is the right one:
+
+- a card carrying a different reader's ID is refused, naming both
+- a populated volume with no CrossPoint markings is refused, in case you typed the wrong mount
+- an empty card, or one the firmware has clearly used, is accepted
+
+Eject the card normally before putting it back in the reader.
 
 ## Conversion needs nothing installed
 

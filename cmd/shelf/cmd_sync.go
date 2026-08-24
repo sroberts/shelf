@@ -15,6 +15,7 @@ import (
 	"github.com/sroberts/shelf/internal/device"
 	"github.com/sroberts/shelf/internal/library"
 	syncpkg "github.com/sroberts/shelf/internal/sync"
+	"github.com/sroberts/shelf/internal/target"
 )
 
 var cmdSync = &command{
@@ -49,10 +50,6 @@ var cmdSync = &command{
 		if err != nil {
 			return err
 		}
-		if dev.Transport == config.TransportSD {
-			return fmt.Errorf("the SD transport is not implemented yet; use a network transport")
-		}
-
 		// Resolve which books to send.
 		shelfName := fs.Arg(0)
 		books, err := booksToSync(db, shelfName)
@@ -63,7 +60,18 @@ var cmdSync = &command{
 			return fmt.Errorf("nothing to sync (shelf %q is empty)", orAll(shelfName))
 		}
 
-		client, err := deviceClient(ctx, dev)
+		root := device.NewPath(dev.Root)
+
+		// The manifest is loaded before the target is opened, because an SD
+		// card is verified against the device UUID it records -- that is what
+		// catches a card belonging to a different reader.
+		manifestPath := cfg.Paths.DeviceStateFile(dev.Nickname)
+		manifest, err := syncpkg.LoadManifest(manifestPath, dev.Nickname, root.String())
+		if err != nil {
+			return err
+		}
+
+		client, label, err := target.Open(ctx, dev, manifest.DeviceUUID)
 		if err != nil {
 			return err
 		}
@@ -78,19 +86,10 @@ var cmdSync = &command{
 		if w := device.CompatWarning(status); w != "" {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 		}
-
-		root := device.NewPath(dev.Root)
-
-		// Load the manifest, listing what shelf placed here previously.
-		manifestPath := cfg.Paths.DeviceStateFile(dev.Nickname)
-		manifest, err := syncpkg.LoadManifest(manifestPath, dev.Nickname, root.String())
-		if err != nil {
-			return err
-		}
 		manifest.Model, manifest.Firmware = status.Device, status.Version
 
 		if !*quiet {
-			fmt.Fprintf(os.Stderr, "reading %s on %s...\n", root, client.Host())
+			fmt.Fprintf(os.Stderr, "reading %s on %s...\n", root, label)
 		}
 		deviceFiles, err := client.ListRecursive(ctx, root)
 		if err != nil {
@@ -399,7 +398,7 @@ var cmdPush = &command{
 		}
 		destPath := device.NewPath(dest)
 
-		client, err := deviceClient(ctx, dev)
+		client, _, err := target.Open(ctx, dev, "")
 		if err != nil {
 			return err
 		}
@@ -461,7 +460,7 @@ var cmdPull = &command{
 		if err != nil {
 			return err
 		}
-		client, err := deviceClient(ctx, dev)
+		client, _, err := target.Open(ctx, dev, "")
 		if err != nil {
 			return err
 		}

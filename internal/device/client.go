@@ -47,6 +47,13 @@ type Status struct {
 	Device   string `json:"device"` // X3 or X4
 }
 
+// ModeLocal is the Mode a filesystem-backed transport reports.
+//
+// The firmware only ever reports "STA" or "AP", so this cannot collide with a
+// real device. It is how CheckCompat tells "no firmware in play" apart from
+// "firmware that failed to report a version".
+const ModeLocal = "SD"
+
 // FileEntry is one item from GET /api/files.
 //
 // Note what is absent: no modification time and no checksum. Change detection

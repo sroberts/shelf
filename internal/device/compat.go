@@ -119,6 +119,14 @@ func CheckCompat(s *Status) error {
 		return fmt.Errorf("%w: no status available", ErrUnsupportedFirmware)
 	}
 
+	// A filesystem-backed transport has no firmware to be compatible with.
+	// This gate exists to catch drift in the HTTP and WebSocket contract, and
+	// a mounted SD card uses neither -- rejecting it for reporting an empty
+	// version would be gating on the wrong thing.
+	if s.Mode == ModeLocal {
+		return nil
+	}
+
 	v, err := ParseVersion(s.Version)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUnsupportedFirmware, err)
@@ -137,6 +145,11 @@ func CheckCompat(s *Status) error {
 // pinned version within a supported major, or "" when it matches.
 func CompatWarning(s *Status) string {
 	if s == nil {
+		return ""
+	}
+	// Same reasoning as CheckCompat: a mounted card runs no firmware, so
+	// there is nothing for its version to differ from.
+	if s.Mode == ModeLocal {
 		return ""
 	}
 	if s.Version == TestedVersion {

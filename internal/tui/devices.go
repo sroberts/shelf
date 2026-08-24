@@ -12,6 +12,8 @@ import (
 
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/device"
+	"github.com/sroberts/shelf/internal/sdcard"
+	"github.com/sroberts/shelf/internal/target"
 )
 
 // devicesModel shows configured and discovered devices with live status.
@@ -38,6 +40,11 @@ type deviceEntry struct {
 
 	Status *device.Status
 	Err    error
+
+	// Local marks a filesystem-backed target. It gets its own rendering
+	// because a card answers none of the questions the status line asks: no
+	// firmware, no signal, no heap, no uptime.
+	Local bool
 
 	// Compat carries the firmware gate result, so an unsupported major is
 	// visible before a sync is attempted rather than after.
@@ -93,7 +100,25 @@ func probeOne(ctx context.Context, d config.Device) deviceEntry {
 	}
 
 	if d.Transport == config.TransportSD {
-		e.Host = d.Mount
+		// A card has no status endpoint, so "reachable" means mounted and
+		// plausibly the right volume. Saying so beats echoing the configured
+		// mount path back, which reveals nothing about whether the card is
+		// actually in the reader.
+		e.Host = target.Label(d)
+		if d.Mount == "" {
+			e.Err = errors.New("no mount configured")
+			return e
+		}
+		vol, err := sdcard.Open(d.Mount)
+		if err != nil {
+			e.Err = err
+			return e
+		}
+		if err := vol.Verify(""); err != nil {
+			e.Err = err
+			return e
+		}
+		e.Local = true
 		return e
 	}
 
@@ -263,6 +288,10 @@ func (m devicesModel) renderEntry(e deviceEntry, focused bool) string {
 		} else {
 			b.WriteString("    " + m.styles.Error.Render(e.Err.Error()) + "\n")
 		}
+
+	case e.Local:
+		b.WriteString("    " + m.styles.Success.Render("SD card mounted") + "   " +
+			m.styles.Subtle.Render("no firmware in play") + "\n")
 
 	case e.Status != nil:
 		s := e.Status

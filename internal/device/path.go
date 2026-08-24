@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Path is a path on the device.
@@ -101,6 +103,21 @@ func checkWritable(p Path) error {
 		return fmt.Errorf("%w: %s is reserved by the firmware", ErrProtectedPath, p)
 	}
 	return nil
+}
+
+// Fold returns a case-folded, NFC-normalized form for collision detection.
+//
+// The device's SD card is FAT32, which is case-insensitive regardless of the
+// host, so "Moby-Dick.epub" and "moby-dick.epub" are one file there even on a
+// Linux workstation where they coexist happily. NFC is applied for the same
+// reason paths are normalized everywhere else: APFS hands back NFD, and two
+// spellings of the same name must fold together.
+//
+// This matches library.FoldPath deliberately. The two run on opposite ends of
+// the pipeline -- import decides what a local file is named, the planner
+// decides where it lands -- and they have to agree on what a collision is.
+func (p Path) Fold() string {
+	return strings.ToLower(norm.NFC.String(string(p)))
 }
 
 // IsHidden reports whether the final component is a dotfile. The firmware

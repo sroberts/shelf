@@ -8,9 +8,56 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.6
+          args: --timeout=5m
+
+  security:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+
   test:
-    # macOS and Linux are co-equal targets. If either goes red, the build is broken.
+    name: Test & Coverage (${{ matrix.os }})
+    needs: [lint]
     strategy:
       fail-fast: false
       matrix:
@@ -24,11 +71,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # epubcheck is the only independent validator of what internal/epub
-      # writes. internal/epub skips its epubcheck test when the binary is
-      # absent, so without this step the whole check silently no-ops in CI and a
-      # writer regression reaches main unnoticed. Pinned so a new epubcheck
-      # release cannot turn the build red on its own schedule.
+      # epubcheck is the independent validator for internal/epub.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -42,45 +85,39 @@ jobs:
           curl -fsSL -o /tmp/epubcheck.zip \
             "https://github.com/w3c/epubcheck/releases/download/v${EPUBCHECK_VERSION}/epubcheck-${EPUBCHECK_VERSION}.zip"
           unzip -q /tmp/epubcheck.zip -d "$HOME/.epubcheck"
-          # The release ships a jar, but the test shells out to `epubcheck`.
           mkdir -p "$HOME/.local/bin"
           printf '#!/bin/sh\nexec java -jar "%s/epubcheck-%s/epubcheck.jar" "$@"\n' \
             "$HOME/.epubcheck" "$EPUBCHECK_VERSION" > "$HOME/.local/bin/epubcheck"
           chmod +x "$HOME/.local/bin/epubcheck"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Fail loudly here rather than letting the epub test quietly skip.
       - name: Verify epubcheck is on PATH
         run: epubcheck --version
-
-      - name: Verify formatting
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "These files need gofmt:"
-            echo "$unformatted"
-            exit 1
-          fi
 
       - name: Vet
         run: go vet ./...
 
-      - name: Build
-        run: go build ./...
+      - name: Run tests with race detector and coverage
+        run: go test -race -v -coverprofile=coverage.out -covermode=atomic ./...
 
-      - name: Test
-        run: go test -race ./...
+      - name: Upload coverage artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
 
   cross-compile:
-    # The shipping artifact is a cgo-free static binary. Prove it still
-    # cross-compiles so a pure-Go dependency never regresses in unnoticed.
+    name: Cross-compile Verification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+
       - name: Cross-compile matrix
         env:
           CGO_ENABLED: "0"

@@ -1,0 +1,38 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - misspell
+    - unconvert
+
+linters-settings:
+  govet:
+    enable-all: false
+  gosec:
+    excludes:
+      - G101 # Exclude false positive hardcoded credentials in tests/fixtures
+      - G304 # File inclusion via variable (shelf is a file library manager)
+  misspell:
+    locale: US
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+    - path: testdata
+      linters:
+        - misspell

@@ -1,100 +1,77 @@
 # shelf
 
-A terminal library manager for [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader)
-e-readers (Xteink X3 / X4).
+A fast terminal library manager for [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader) e-readers (Xteink X3 / X4).
 
-Your filesystem is the library. The device is a path-stable sync target. The SQLite index is a
-derived cache you can delete at any time.
+Your filesystem is the library. The device is a path-stable sync target. The SQLite index is a derived cache you can delete at any time.
 
 ## Why
 
-- **No database owns your files.** Books live in a plain directory tree you can read with `ls`.
-- **Metadata edits never move files.** Once a book has a path on the device, that path is frozen.
-- **Reading positions survive.** The device clears its render and progress cache on any upload,
-  rename, or move, so shelf treats path stability as a hard requirement rather than a preference.
-- No `metadata.opf` litter, no GUI dependency, no Qt, no Python runtime.
+- **Filesystem-first:** Books live in a plain directory tree you can browse with standard tools like `ls`. No proprietary database locks up your files, and no `metadata.opf` sidecars clutter your folders.
+- **Path stability:** CrossPoint clears its render and progress cache whenever a book is moved or renamed. `shelf` pins device paths permanently so metadata edits never reset your reading position.
+- **No bloat:** Single static binary. No GUI dependencies, no Qt, no Python runtime, and no cgo.
 
-## Status
+## Features
 
-M0–M6 are implemented and tested; M7 is not started. M0–M4 are verified against real hardware
-(an X4 on firmware 1.4.1). The M5 and M6 device round trips are not yet confirmed — the OPDS
-catalog is verified against a port of the firmware's own feed parser rather than against the
-panel.
+- **Terminal UI & headless CLI:** Interactive TUI with cover art support (Kitty, Sixel, and unicode half-blocks) plus a headless mode (`--no-tui`) for scripting and automation.
+- **Flexible sync transports:** Sync wirelessly over Wi-Fi (HTTP/WebSocket) or directly to a mounted microSD card for fast initial transfers.
+- **Reading progress sync:** Built-in KOReader sync server to sync reading progress with CrossPoint devices.
+- **OPDS catalog:** Built-in OPDS server to browse and download books directly from your reader or any OPDS client.
+- **In-process PDF conversion:** Converts text-layer PDFs to reflowable EPUB 3 targeted at e-ink panels without needing Calibre or external tools installed.
+- **Metadata editing & search:** Edit EPUB metadata in place and search using full-text queries and field filters.
 
-| Milestone | Scope | State |
-|---|---|---|
-| M0 | EPUB parsing, library index, scan and search | done |
-| M1 | Device HTTP client and discovery | done |
-| M2 | WebSocket upload and the sync engine | done |
-| M3 | Terminal interface: library, devices, sync | done |
-| M4 | PDF conversion and device-targeted optimization | done |
-| M5 | Reading-progress sync, client and embedded server | done |
-| M6 | OPDS catalog served from `shelf serve` | done |
-| M7 | Packaging: Nix flake, static binary, `nix run` | not started |
+## Installation
 
-WebDAV and mDNS discovery are designed in `spec.md` but not yet built. The spec's Settings screen is blocked upstream — see the firmware
-note below.
-
-## Reading progress
-
-The reader ships a KOReader sync client, so shelf runs the other end of it:
+Requires Go 1.25 or later.
 
 ```sh
-shelf user add scott    # prompts for a password, prints what to type into the reader
-shelf serve             # prints the LAN address to point the reader at
+# Install directly
+go install github.com/sroberts/shelf/cmd/shelf@latest
+
+# Or build from source
+go build -o shelf ./cmd/shelf
 ```
 
-Accounts can also be registered from the reader's own sync settings, but the reader gives no
-sign of which action it took — a Login against an empty server and a wrong password both surface
-as "Authentication failed". Creating the account here removes that ambiguity. `shelf user ls`,
-`passwd`, and `rm` manage them afterwards, and all four work while `shelf serve` is running: the
-server picks up the change on the next request, with no restart. Once your accounts exist, run
-the server with `--no-registration`. Set `[kosync] user` in the config and `shelf ls` grows a
-READ column.
+## Quick Start
 
-## Browsing the library from the reader
+1. **Scan your library:**
+   ```sh
+   shelf scan ~/Books
+   ```
 
-`shelf serve` also publishes the library as an OPDS catalog, on the same address and the same
-account, so the reader can pull a book over Wi-Fi without a sync run:
+2. **Launch the TUI:**
+   ```sh
+   shelf
+   ```
+   - Navigate with arrow keys or Vim bindings (`j` / `k`)
+   - `/` to search and filter
+   - `Space` or `v` to select books
+   - `s` to sync selected books to device
+   - `i` to toggle the book detail panel
+   - `Tab` to cycle views (Library, Devices, Sync)
+   - `?` for help, `q` to quit
 
+3. **Or run via CLI:**
+   ```sh
+   shelf ls author:"Le Guin"
+   shelf sync --dry-run
+   ```
+
+## Syncing
+
+### Over Wi-Fi
+
+Discover and inspect devices on your local network:
+
+```sh
+shelf devices --discover
+shelf sync
 ```
-http://<this-machine>:8080/opds
-```
 
-Add it under the reader's OPDS settings. You get the whole library, recently added, and browse by
-author, series, tag, and shelf, with search wired to the same query syntax as `shelf ls`. Any
-other OPDS client works too — Panels, KOReader, Thorium.
+Use `shelf sync --dry-run` to preview planned transfers and disk usage before uploading.
 
-Two limits are the firmware's rather than shelf's, and are worth knowing before they surprise you:
+### Direct via microSD Card
 
-- **Only EPUBs are downloadable on CrossPoint.** Its acquisition check is an exact string match on
-  `application/epub+zip`, so PDF, TXT, and XTC entries are parsed and then ignored. They are still
-  advertised with their real types, because other clients take them — shelf will not mislabel a
-  PDF to sneak it past.
-- **A book pulled over OPDS is not tracked in the sync manifest.** The firmware picks the
-  filename and folder, so the file is not at shelf's pinned path and `shelf sync --prune` sees it
-  as an orphan. Pick one route per book, or leave `--prune` off.
-
-`--open-catalog` drops the password, `--no-opds` turns the catalog off entirely, and the `[opds]`
-config section sets a title, a page size, and either switch permanently.
-
-If the reader reports an authentication failure, check the scheme first. shelf serves plain
-HTTP; an `https://` URL fails the TLS handshake before any credentials are read, and the device
-reports that as a bad login.
-
-Two things to know. The protocol runs over plain HTTP and sends both `MD5(password)` and HTTP
-Basic with the password itself, so use a credential that is unique and disposable. And
-`progress.db` lives under the data directory rather than the cache — unlike `index.db` it cannot
-be rebuilt, because the reader pushes positions here and keeps no synchronised copy.
-
-## Syncing without Wi-Fi
-
-The reader's USB-C port is not a data path. The ESP32-C3 exposes only a USB Serial/JTAG
-controller, so there is no mass-storage mode — plugging in a cable gives you a serial console and
-a firmware flashing route, not a volume. That is silicon, not a firmware gap.
-
-The offline route is the microSD card itself. Put it in a card reader and point shelf at the
-mount:
+Syncing directly to the microSD card is much faster for large libraries or first-time syncs. Insert the card into your computer and add a device entry to your configuration file (`~/.config/shelf/config.toml`):
 
 ```toml
 [[device]]
@@ -104,125 +81,57 @@ mount = "/Volumes/CROSSPOINT"
 root = "/Books"
 ```
 
-Everything works the same: same planner, same manifest, same path pinning, same `--dry-run`. It is
-also much faster than Wi-Fi for a first sync, which is the case it exists for — a large library
-over an ESP32-C3 radio takes a long time.
+Sync as usual with `shelf sync`. Always safely eject the card before reinserting it into the reader.
 
-With no firmware in between, shelf owns the filesystem, so it checks more before writing. It
-refuses to touch `/.crosspoint` at the lowest layer, writes each book to a temporary file and
-renames it into place so a pulled card cannot leave a half-written book that looks complete, and
-verifies the volume is the right one:
+## Reading Progress & OPDS Server
 
-- a card carrying a different reader's ID is refused, naming both
-- a populated volume with no CrossPoint markings is refused, in case you typed the wrong mount
-- an empty card, or one the firmware has clearly used, is accepted
+`shelf serve` runs both the KOReader reading-progress sync service and an OPDS catalog server.
 
-Eject the card normally before putting it back in the reader.
+```sh
+# Create a user account
+shelf user add <username>
 
-## Conversion needs nothing installed
+# Start the server
+shelf serve
+```
 
-The firmware has no PDF engine, so shelf converts PDFs on the way to a device. That conversion
-runs **in-process**: no Calibre, no Java, no `mutool`, nothing on `PATH`. `decant` is compiled in
-and reconstructs reflowable EPUB 3 from a text-layer PDF, targeting the CrossPoint panel
-specifically.
-
-A scanned PDF with no text layer fails with a clear error pointing at OCR, rather than producing
-a technically valid EPUB of page images that turns out to be unreadable on the device.
-
-Images are downscaled to the panel, converted to greyscale, and recompressed. Where the panel
-geometry is not known — the X3's has not been read off hardware — the geometry step is skipped
-rather than guessed at, since downscaling to the wrong size discards detail the panel could have
-shown.
-
-## The terminal interface
-
-Run `shelf` with no arguments. Vim keys, `?` for help, `tab` to cycle screens.
-
-- **Header** — always on screen: how many books, authors, series, and tags the library holds, how
-  much disk it takes, and how it stands against the active device.
-- **Library** — filter with `/`, select with `space` or `v`, sync with `s`. A glyph column shows
-  each book's sync state against the active device, and a panel on the right carries everything the
-  table has no room for: cover, tags, publisher, identifiers, reading position, and the path on
-  disk. `i` hides it; below 90 columns it hides itself, because under that the title column loses
-  more than the panel adds.
-- **Devices** — live status: model, firmware, mode, signal, free heap, uptime.
-- **Sync** — plan preview, confirmation, then live progress driven by the device's own frames.
-
-`--no-tui` forces the CLI, and a non-interactive stdout does the same automatically, so scripts
-and cron jobs never get a screenful of escape codes. Every operation is available headless.
-
-Cover art renders through the kitty graphics protocol or sixel where the terminal supports it,
-falling back to unicode half-blocks everywhere else. Inside tmux or screen it deliberately uses
-blocks, since multiplexer passthrough is unreliable. Override with `ui.graphics` in the config.
+- **Reading Progress:** In CrossPoint's sync settings, configure KOReader sync with the server address (`http://<this-machine>:8080`) and your user credentials. Set `[kosync] user` in your config to see reading progress in `shelf ls`.
+- **OPDS Catalog:** Add `http://<this-machine>:8080/opds` in CrossPoint's OPDS browser settings. *(Note: CrossPoint's OPDS client only downloads EPUB files; other formats are filtered out by the device).*
+- Additional server flags: `--open-catalog` disables OPDS password authentication, and `--no-opds` disables the catalog endpoint.
 
 ## Commands
 
 ```
-shelf scan [--deep] [--covers]          index the library directory
-shelf ls [QUERY] [--json] [--sort KEY]  list and search
-shelf tags [--json]                     list tags with book counts
-shelf meta BOOK [--set FIELD=VALUE]     show or edit metadata, in place
-shelf import FILE... [--move|--link]    add files to the library
-shelf convert FILE... [--out DIR]       convert a PDF to EPUB
-shelf optimize FILE... --profile NAME   rebuild an EPUB for a device panel
-shelf shelf create|ls|rm|show|add       manage shelves
-shelf devices [--discover]              find and inspect devices
-shelf user add|ls|rm|passwd NAME        manage sync and catalog accounts
-shelf serve [--no-opds] [--open-catalog] run progress sync and the OPDS catalog
-shelf sync [SHELF] [--dry-run]          send a shelf to a device
-shelf push FILE... --to /Books          upload directly
-shelf pull PATH... [--out DIR]          download from a device
-shelf doctor [--offline]                check config, paths, and connectivity
-shelf version [--full]                  print the version and how it was built
-shelf --no-tui                          force CLI mode
+shelf scan [--deep] [--covers]          Index the library directory
+shelf ls [QUERY] [--json] [--sort KEY]  List and search books
+shelf tags [--json]                     List tags with book counts
+shelf meta BOOK [--set FIELD=VALUE]     Show or edit book metadata in place
+shelf import FILE... [--move|--link]    Add files to the library
+shelf convert FILE... [--out DIR]       Convert PDF or TXT to EPUB
+shelf optimize FILE... --profile NAME   Rebuild an EPUB for a device panel
+shelf shelf create|ls|rm|show|add       Manage named shelves
+shelf devices [--discover]              Find and inspect devices
+shelf user add|ls|rm|passwd NAME        Manage sync and catalog accounts
+shelf serve [--no-opds] [--open-catalog] Run progress sync and OPDS catalog
+shelf sync [SHELF] [--dry-run]          Send a shelf to a device
+shelf push FILE... --to /Books          Upload directly to a device path
+shelf pull PATH... [--out DIR]          Download files from a device
+shelf doctor [--offline]                Check configuration and index health
+shelf version [--full]                  Print version information
+shelf --no-tui                          Force CLI mode (headless)
 ```
 
-Search accepts a small query language: bare words hit the full-text index,
-`author:"le guin"` and `tag:queue` filter fields, and `and` / `or` / `not` with
-parentheses combine them.
+### Search Syntax
 
-## Building
+Search queries support bare words and field qualifiers:
+- Full-text search: `earthsea`
+- Field filters: `author:"le guin"`, `series:"earthsea"`, `tag:sci-fi`
+- Boolean logic: `author:"dick" and not tag:read`
 
-Requires Go 1.25 or newer (a floor set by `modernc.org/sqlite`). No cgo, so
-cross-compiling is trivial.
+## Documentation
 
-```sh
-go build -o shelf ./cmd/shelf   # the binary
-go test ./...
-```
-
-`go build ./...` on its own compiles every package and discards the result — it is a compile
-check, not a build, and leaves no executable behind. `go install github.com/sroberts/shelf/cmd/shelf@latest`
-works too.
-
-`shelf version` reports what a binary actually is, taken from the build info the toolchain stamps
-in rather than from `-ldflags`: a module version when installed by version, and otherwise the VCS
-revision plus whether the working tree was dirty when it was built.
-
-## A firmware hazard worth knowing
-
-`GET /api/settings` **crashes** an X4 running 1.4.1: no response, then a reboot that leaves the SD
-card unmounted until it is reseated. Nothing in shelf calls that endpoint, and `shelf doctor` does
-not probe it. See `SettingsEndpointUnsafe` in `internal/device/compat.go`.
-
-## Design notes
-
-Two behaviours are worth knowing about, because they are the point of the tool:
-
-**Path pinning.** Once a book occupies a path on the device, that path is frozen in the
-manifest. Changing the naming template, the series numbering, or any other metadata produces
-zero moves. Every rename, move, and re-upload clears the firmware's `.crosspoint` cache for
-that book, which destroys the reading position, so repathing happens only under an explicit
-`shelf sync --repath` that lists every book about to lose its place.
-
-**The index is disposable.** `index.db` is a cache derived from the files on disk. Delete it
-and rescan; the only thing that cannot be reconstructed is your shelf definitions, which is
-why those live in `shelves.toml` and are written there first.
-
-## Design
-
-See [`spec.md`](spec.md) for the full design, the CrossPoint compatibility contract, and the
-rationale behind the sync model.
+- [`spec.md`](spec.md) — Technical specification and CrossPoint compatibility details.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — Development workflow, architecture invariants, and testing guidelines.
 
 ## License
 

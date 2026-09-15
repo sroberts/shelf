@@ -114,7 +114,7 @@ func listConfiguredDevices(ctx context.Context, cfg *config.Config, asJSON bool)
 
 	for _, d := range cfg.Devices {
 		host := d.Host
-		state := "ok"
+		var state string
 
 		var status *device.Status
 		var statusErr error

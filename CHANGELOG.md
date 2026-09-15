@@ -16,3 +16,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Streamlined `README.md` to focus on user-facing features, installation, and commands, removing internal development milestones and firmware trivia.
+
+### Security
+- Upgraded `golang.org/x/image` to v0.46.0 to resolve vulnerability GO-2026-6222.

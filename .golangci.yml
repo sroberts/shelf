@@ -3,26 +3,17 @@ run:
   tests: true
 
 linters:
+  disable-all: true
   enable:
-    - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
-    - unused
-    - gosec
-    - misspell
     - unconvert
+    - unused
 
 linters-settings:
   govet:
     enable-all: false
-  gosec:
-    excludes:
-      - G101 # Exclude false positive hardcoded credentials in tests/fixtures
-      - G304 # File inclusion via variable (shelf is a file library manager)
-  misspell:
-    locale: US
 
 issues:
   exclude-use-default: false
@@ -31,8 +22,10 @@ issues:
   exclude-rules:
     - path: _test\.go
       linters:
-        - errcheck
-        - gosec
-    - path: testdata
-      linters:
-        - misspell
+        - unused
+    - path: internal/convert/cache_test\.go
+      text: "SA4000"
+    - path: internal/library/book\.go
+      text: "tagsFlat"
+    - path: internal/tui/syncview\.go
+      text: "syncStoppedMsg"

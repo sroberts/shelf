@@ -290,6 +290,9 @@ func TestE2ERm(t *testing.T) {
 
 	// shelf ls should now find no books
 	_, stderr, code = runShelfWithEnv(t, env, "--library", libDir, "ls")
+	if code != 0 {
+		t.Errorf("shelf ls exit code = %d, want 0", code)
+	}
 	if !strings.Contains(stderr, "no books match") {
 		t.Errorf("expected 'no books match' after deletion, got: %q", stderr)
 	}
@@ -308,6 +311,9 @@ func TestE2ERm(t *testing.T) {
 	stdout, _, code = runShelfWithEnv(t, env, "--library", libDir, "delete", "-y", epub1, epub2)
 	if code != 0 {
 		t.Fatalf("delete -y failed with code %d", code)
+	}
+	if !strings.Contains(stdout, "deleted") {
+		t.Errorf("expected 'deleted' in stdout, got %q", stdout)
 	}
 	if _, err := os.Stat(epub1); !os.IsNotExist(err) {
 		t.Errorf("epub1 still exists: %v", err)

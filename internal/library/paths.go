@@ -1,6 +1,7 @@
 package library
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -43,4 +44,21 @@ func FoldPath(p string) string {
 // normalization differences between platforms.
 func SameFile(a, b string) bool {
 	return NormalizePath(a) == NormalizePath(b)
+}
+
+// PruneEmptyDirs removes empty parent directories of path up to, but not including, root.
+// It stops when a directory is non-empty, when root is reached, or if path is outside root.
+func PruneEmptyDirs(root, path string) {
+	if root == "" || path == "" {
+		return
+	}
+	root = NormalizePath(root)
+	dir := filepath.Dir(NormalizePath(path))
+	for dir != root && withinRoot(root, dir) {
+		// os.Remove only removes empty directories; it fails if non-empty.
+		if err := os.Remove(dir); err != nil {
+			break
+		}
+		dir = filepath.Dir(dir)
+	}
 }

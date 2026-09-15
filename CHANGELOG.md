@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `shelf rm` and `shelf delete` commands to remove books from both the index and filesystem with interactive confirmation, `--yes` / `-y`, `--dry-run`, and `--quiet` flags.
+- `DeleteBook` and `DeleteBookByID` methods in `internal/library` for deleting books from the database and removing their files from disk.
+- `PruneEmptyDirs` helper in `internal/library` to clean up empty parent directories up to the library root upon book deletion.
+
 ## [0.1.0] - 2026-09-14
 
 ### Added

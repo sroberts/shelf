@@ -219,3 +219,100 @@ func TestE2ELibraryLifecycle(t *testing.T) {
 		t.Logf("shelf doctor output: %s", stdout)
 	}
 }
+
+func TestE2ERm(t *testing.T) {
+	testDir := t.TempDir()
+	libDir := filepath.Join(testDir, "books")
+	env := []string{
+		"XDG_DATA_HOME=" + filepath.Join(testDir, "data"),
+		"XDG_CONFIG_HOME=" + filepath.Join(testDir, "config"),
+		"XDG_STATE_HOME=" + filepath.Join(testDir, "state"),
+		"XDG_CACHE_HOME=" + filepath.Join(testDir, "cache"),
+	}
+
+	authorDir := filepath.Join(libDir, "Le Guin")
+	epubPath := filepath.Join(authorDir, "Earthsea.epub")
+	createTestEPUB(t, epubPath, "A Wizard of Earthsea", "Ursula K. Le Guin")
+
+	// 1. Scan the library
+	_, _, code := runShelfWithEnv(t, env, "--library", libDir, "scan", libDir)
+	if code != 0 {
+		t.Fatalf("scan failed: code %d", code)
+	}
+
+	// 2. Dry run rm
+	stdout, _, code := runShelfWithEnv(t, env, "--library", libDir, "rm", "--dry-run", "Earthsea")
+	if code != 0 {
+		t.Fatalf("rm --dry-run failed with code %d", code)
+	}
+	if !strings.Contains(stdout, "would delete") {
+		t.Errorf("expected 'would delete' in stdout, got %q", stdout)
+	}
+	if _, err := os.Stat(epubPath); err != nil {
+		t.Fatalf("dry-run deleted file: %v", err)
+	}
+
+	// 3. rm without --yes in non-interactive mode
+	_, stderr, code := runShelfWithEnv(t, env, "--library", libDir, "rm", "Earthsea")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code when prompting non-interactively without --yes")
+	}
+	if !strings.Contains(stderr, "refusing to prompt non-interactively; pass --yes") {
+		t.Errorf("expected refusal message in stderr, got: %q", stderr)
+	}
+	if _, err := os.Stat(epubPath); err != nil {
+		t.Fatalf("unconfirmed rm deleted file: %v", err)
+	}
+
+	// 4. rm with --yes
+	stdout, _, code = runShelfWithEnv(t, env, "--library", libDir, "rm", "--yes", "Earthsea")
+	if code != 0 {
+		t.Fatalf("rm --yes failed with code %d", code)
+	}
+	if !strings.Contains(stdout, "deleted") {
+		t.Errorf("expected 'deleted' in stdout, got %q", stdout)
+	}
+
+	// File should be deleted
+	if _, err := os.Stat(epubPath); !os.IsNotExist(err) {
+		t.Errorf("file still exists after rm --yes: %v", err)
+	}
+
+	// Empty parent directory should be pruned
+	if _, err := os.Stat(authorDir); !os.IsNotExist(err) {
+		t.Errorf("authorDir was not pruned: %v", err)
+	}
+
+	// Library root should still exist
+	if _, err := os.Stat(libDir); err != nil {
+		t.Errorf("library root was deleted: %v", err)
+	}
+
+	// shelf ls should now find no books
+	_, stderr, code = runShelfWithEnv(t, env, "--library", libDir, "ls")
+	if !strings.Contains(stderr, "no books match") {
+		t.Errorf("expected 'no books match' after deletion, got: %q", stderr)
+	}
+
+	// 5. Test shelf delete alias and multi-book deletion
+	epub1 := filepath.Join(libDir, "Author1", "Book1.epub")
+	epub2 := filepath.Join(libDir, "Author2", "Book2.epub")
+	createTestEPUB(t, epub1, "Book One", "Author 1")
+	createTestEPUB(t, epub2, "Book Two", "Author 2")
+
+	_, _, code = runShelfWithEnv(t, env, "--library", libDir, "scan", libDir)
+	if code != 0 {
+		t.Fatalf("second scan failed: code %d", code)
+	}
+
+	stdout, _, code = runShelfWithEnv(t, env, "--library", libDir, "delete", "-y", epub1, epub2)
+	if code != 0 {
+		t.Fatalf("delete -y failed with code %d", code)
+	}
+	if _, err := os.Stat(epub1); !os.IsNotExist(err) {
+		t.Errorf("epub1 still exists: %v", err)
+	}
+	if _, err := os.Stat(epub2); !os.IsNotExist(err) {
+		t.Errorf("epub2 still exists: %v", err)
+	}
+}

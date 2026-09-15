@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"os"
@@ -826,9 +827,243 @@ func TestValidFATName(t *testing.T) {
 
 func isValidUTF8(s string) bool {
 	for _, r := range s {
-		if r == '�' {
+		if r == '\uFFFD' {
 			return false
 		}
 	}
 	return true
+}
+
+func TestDeleteBookRemovesFileAndRow(t *testing.T) {
+	db := openTestDB(t)
+	tmpDir := t.TempDir()
+	bookFile := filepath.Join(tmpDir, "test.epub")
+	if err := os.WriteFile(bookFile, []byte("epub content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Book{
+		SHA256: "hash123", Path: bookFile, Format: FormatEPUB,
+		Title: "To Be Deleted", Tags: []string{"temp"},
+	}
+	if err := db.Upsert(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.DeleteBook(bookFile); err != nil {
+		t.Fatalf("DeleteBook failed: %v", err)
+	}
+
+	// Verify file is gone from disk
+	if _, err := os.Stat(bookFile); !os.IsNotExist(err) {
+		t.Errorf("file was not removed from disk: %v", err)
+	}
+
+	// Verify book is gone from DB
+	if _, err := db.ByPath(bookFile); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound from ByPath, got %v", err)
+	}
+
+	// Verify FTS and tags are cleaned up
+	if got, _ := db.Search("Deleted", SearchOptions{}); len(got) != 0 {
+		t.Errorf("book still matches FTS: %v", got)
+	}
+}
+
+func TestDeleteBookFileAlreadyGone(t *testing.T) {
+	db := openTestDB(t)
+	tmpDir := t.TempDir()
+	bookFile := filepath.Join(tmpDir, "nonexistent.epub")
+
+	b := &Book{
+		SHA256: "hash456", Path: bookFile, Format: FormatEPUB,
+		Title: "Already Missing",
+	}
+	if err := db.Upsert(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.DeleteBook(bookFile); err != nil {
+		t.Fatalf("DeleteBook on missing file returned error: %v", err)
+	}
+
+	if _, err := db.ByPath(bookFile); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound from ByPath, got %v", err)
+	}
+}
+
+func TestDeleteBookByID(t *testing.T) {
+	db := openTestDB(t)
+	tmpDir := t.TempDir()
+	bookFile := filepath.Join(tmpDir, "by_id.epub")
+	if err := os.WriteFile(bookFile, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Book{
+		SHA256: "hash789", Path: bookFile, Format: FormatEPUB,
+		Title: "Delete By ID",
+	}
+	if err := db.Upsert(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.DeleteBookByID(b.ID); err != nil {
+		t.Fatalf("DeleteBookByID failed: %v", err)
+	}
+
+	if _, err := os.Stat(bookFile); !os.IsNotExist(err) {
+		t.Errorf("file still exists on disk: %v", err)
+	}
+	if _, err := db.ByID(b.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound from ByID, got %v", err)
+	}
+}
+
+func TestDeleteBookFileRemovalFailureLeavesRowIntact(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping permission test when running as root")
+	}
+	db := openTestDB(t)
+	tmpDir := t.TempDir()
+	subDir := filepath.Join(tmpDir, "locked")
+	if err := os.Mkdir(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bookFile := filepath.Join(subDir, "locked.epub")
+	if err := os.WriteFile(bookFile, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Book{
+		SHA256: "hashlock", Path: bookFile, Format: FormatEPUB,
+		Title: "Locked Book",
+	}
+	if err := db.Upsert(b); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make directory read-only so file cannot be unlinked
+	if err := os.Chmod(subDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(subDir, 0o755) })
+
+	err := db.DeleteBook(bookFile)
+	if err == nil {
+		t.Fatal("expected error deleting file in read-only directory, got nil")
+	}
+
+	// Database row must still be intact!
+	got, err := db.ByPath(bookFile)
+	if err != nil {
+		t.Fatalf("expected book to still exist in db, got %v", err)
+	}
+	if got.Title != "Locked Book" {
+		t.Errorf("expected title 'Locked Book', got %q", got.Title)
+	}
+}
+
+func TestDeleteBookCascadesShelfMembers(t *testing.T) {
+	db := openTestDB(t)
+	tmpDir := t.TempDir()
+	bookFile := filepath.Join(tmpDir, "shelf_book.epub")
+	if err := os.WriteFile(bookFile, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Book{
+		SHA256: "hashshelf", Path: bookFile, Format: FormatEPUB,
+		Title: "Shelf Book",
+	}
+	if err := db.Upsert(b); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.CreateShelf(Shelf{Name: "Favorites", Kind: KindManual}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddToShelf("Favorites", []string{b.Path}); err != nil {
+		t.Fatal(err)
+	}
+
+	members, err := db.ShelfBooks("Favorites")
+	if err != nil || len(members) != 1 {
+		t.Fatalf("expected 1 member in Favorites, got %d (err: %v)", len(members), err)
+	}
+
+	if err := db.DeleteBook(bookFile); err != nil {
+		t.Fatal(err)
+	}
+
+	members, err = db.ShelfBooks("Favorites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 0 {
+		t.Errorf("expected 0 members after deletion, got %d", len(members))
+	}
+}
+
+func TestPruneEmptyDirs(t *testing.T) {
+	root := t.TempDir()
+	authorDir := filepath.Join(root, "Author")
+	seriesDir := filepath.Join(authorDir, "Series")
+	if err := os.MkdirAll(seriesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	bookFile := filepath.Join(seriesDir, "Book.epub")
+	if err := os.WriteFile(bookFile, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove the file first
+	if err := os.Remove(bookFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// Prune up to root
+	PruneEmptyDirs(root, bookFile)
+
+	// Series and Author should be gone
+	if _, err := os.Stat(seriesDir); !os.IsNotExist(err) {
+		t.Errorf("seriesDir was not pruned")
+	}
+	if _, err := os.Stat(authorDir); !os.IsNotExist(err) {
+		t.Errorf("authorDir was not pruned")
+	}
+	// Root must still exist
+	if _, err := os.Stat(root); err != nil {
+		t.Errorf("root was deleted: %v", err)
+	}
+
+	// Now test when another file is present in authorDir
+	authorDir2 := filepath.Join(root, "Author2")
+	seriesDir2 := filepath.Join(authorDir2, "Series2")
+	if err := os.MkdirAll(seriesDir2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	otherBook := filepath.Join(authorDir2, "Other.epub")
+	if err := os.WriteFile(otherBook, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bookFile2 := filepath.Join(seriesDir2, "Book2.epub")
+	if err := os.WriteFile(bookFile2, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(bookFile2); err != nil {
+		t.Fatal(err)
+	}
+	PruneEmptyDirs(root, bookFile2)
+
+	// seriesDir2 was empty, should be pruned
+	if _, err := os.Stat(seriesDir2); !os.IsNotExist(err) {
+		t.Errorf("seriesDir2 was not pruned")
+	}
+	// authorDir2 has otherBook, so it must still exist!
+	if _, err := os.Stat(authorDir2); err != nil {
+		t.Errorf("authorDir2 was incorrectly pruned: %v", err)
+	}
 }

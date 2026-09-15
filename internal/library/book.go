@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -197,6 +198,33 @@ func (db *DB) Delete(path string) error {
 		return fmt.Errorf("%w: %s", ErrNotFound, path)
 	}
 	return nil
+}
+
+// DeleteBook removes a book from both the filesystem and the index.
+// If the file does not exist on disk, the index row is still removed.
+// If removing the file fails for any other reason (e.g. permission denied),
+// the index row is left intact and the error is returned.
+func (db *DB) DeleteBook(path string) error {
+	b, err := db.ByPath(path)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(b.Path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove book file: %w", err)
+	}
+	return db.Delete(b.Path)
+}
+
+// DeleteBookByID removes a book by index ID from both the filesystem and the index.
+func (db *DB) DeleteBookByID(id int64) error {
+	b, err := db.ByID(id)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(b.Path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove book file: %w", err)
+	}
+	return db.Delete(b.Path)
 }
 
 // PathIndex is the (size, mtime) snapshot a scan compares against to decide

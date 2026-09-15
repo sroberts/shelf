@@ -43,6 +43,7 @@ jobs:
 
       - name: Package archive
         run: |
+          cp README.md LICENSE dist/
           ARCHIVE="shelf-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
           tar -czvf "$ARCHIVE" -C dist shelf README.md LICENSE
           sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"

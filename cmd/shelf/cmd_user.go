@@ -290,8 +290,7 @@ func promptNewPassword() (string, error) {
 
 // confirm asks a yes/no question, defaulting to no.
 func confirm(question string) bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		fmt.Fprintln(os.Stderr, "refusing to prompt non-interactively; pass --yes")
 		return false
 	}

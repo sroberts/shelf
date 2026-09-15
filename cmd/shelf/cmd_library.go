@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -362,6 +363,11 @@ func resolveBook(db *library.DB, ref string) (*library.Book, error) {
 	}
 	switch len(books) {
 	case 0:
+		if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+			if b, err := db.ByID(id); err == nil {
+				return b, nil
+			}
+		}
 		return nil, fmt.Errorf("no book matches %q", ref)
 	case 1:
 		return books[0], nil
@@ -504,4 +510,89 @@ func (m *multiFlag) String() string { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error {
 	*m = append(*m, v)
 	return nil
+}
+
+// --- rm / delete ---
+
+var cmdRm = &command{
+	name:    "rm",
+	summary: "delete books from the database and remove their files",
+	usage:   "rm [--yes] [--dry-run] [--quiet] BOOK...",
+	run:     runRm,
+}
+
+var cmdDelete = &command{
+	name:    "delete",
+	summary: "delete books from the database and remove their files",
+	usage:   "delete [--yes] [--dry-run] [--quiet] BOOK...",
+	run:     runRm,
+}
+
+func runRm(ctx context.Context, a *app, args []string) error {
+	fs := newFlagSet("rm")
+	yes := fs.Bool("yes", false, "do not prompt for confirmation")
+	fs.BoolVar(yes, "y", false, "alias for --yes")
+	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing anything")
+	quiet := fs.Bool("quiet", false, "suppress progress messages")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("%w: expected at least one book", errUsage)
+	}
+
+	cfg, err := a.config()
+	if err != nil {
+		return err
+	}
+	db, err := a.index()
+	if err != nil {
+		return err
+	}
+
+	var targets []*library.Book
+	seen := map[string]bool{}
+	for _, arg := range fs.Args() {
+		b, err := resolveBook(db, arg)
+		if err != nil {
+			return err
+		}
+		if !seen[b.Path] {
+			seen[b.Path] = true
+			targets = append(targets, b)
+		}
+	}
+
+	if *dryRun {
+		for _, b := range targets {
+			fmt.Printf("would delete %s (%s)\n", b.Path, b.DisplayTitle())
+		}
+		return nil
+	}
+
+	if !*yes {
+		if !confirmDeleteBooks(targets) {
+			return errors.New("cancelled")
+		}
+	}
+
+	for _, b := range targets {
+		if err := db.DeleteBook(b.Path); err != nil {
+			return err
+		}
+		library.PruneEmptyDirs(cfg.LibraryRoot, b.Path)
+		if !*quiet {
+			fmt.Printf("deleted %s\n", b.Path)
+		}
+	}
+
+	return a.saveShelves()
+}
+
+func confirmDeleteBooks(targets []*library.Book) bool {
+	fmt.Fprintf(os.Stderr, "The following book(s) will be deleted and their file(s) removed from disk:\n")
+	for _, b := range targets {
+		fmt.Fprintf(os.Stderr, "  • %s (%s)\n", b.DisplayTitle(), b.Path)
+	}
+	return confirm(fmt.Sprintf("Delete %d book(s)?", len(targets)))
 }

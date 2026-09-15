@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-14
+
 ### Added
 - Comprehensive test coverage for `internal/target` package.
 - End-to-end integration test suite in `cmd/shelf/e2e_test.go` verifying CLI workflows and command execution with isolated test environments.

@@ -209,10 +209,7 @@ func (db *DB) DeleteBook(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(b.Path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove book file: %w", err)
-	}
-	return db.Delete(b.Path)
+	return db.deleteBook(b)
 }
 
 // DeleteBookByID removes a book by index ID from both the filesystem and the index.
@@ -221,6 +218,10 @@ func (db *DB) DeleteBookByID(id int64) error {
 	if err != nil {
 		return err
 	}
+	return db.deleteBook(b)
+}
+
+func (db *DB) deleteBook(b *Book) error {
 	if err := os.Remove(b.Path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove book file: %w", err)
 	}

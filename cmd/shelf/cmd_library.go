@@ -346,8 +346,22 @@ func printMetadata(b *library.Book) {
 }
 
 // resolveBook finds a book by path or by a unique title match, so the CLI
-// accepts both `shelf meta ~/Books/x.epub` and `shelf meta earthsea`.
+// accepts both `shelf meta ~/Books/x.epub` and `shelf meta earthsea`. An index
+// id is honoured only when spelled `id:42`: ids are never shown and change
+// whenever index.db is rebuilt, so a bare number that matched no title (a
+// year, a typo) must not silently select an unrelated book for `rm -y`.
 func resolveBook(db *library.DB, ref string) (*library.Book, error) {
+	if rest, ok := strings.CutPrefix(ref, "id:"); ok {
+		id, err := strconv.ParseInt(rest, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid book id %q", ref)
+		}
+		b, err := db.ByID(id)
+		if err != nil {
+			return nil, fmt.Errorf("no book with id %d", id)
+		}
+		return b, nil
+	}
 	if abs, err := filepath.Abs(ref); err == nil {
 		if b, err := db.ByPath(abs); err == nil {
 			return b, nil
@@ -363,11 +377,6 @@ func resolveBook(db *library.DB, ref string) (*library.Book, error) {
 	}
 	switch len(books) {
 	case 0:
-		if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
-			if b, err := db.ByID(id); err == nil {
-				return b, nil
-			}
-		}
 		return nil, fmt.Errorf("no book matches %q", ref)
 	case 1:
 		return books[0], nil
@@ -578,7 +587,10 @@ func runRm(ctx context.Context, a *app, args []string) error {
 
 	for _, b := range targets {
 		if err := db.DeleteBook(b.Path); err != nil {
-			return err
+			// Books already deleted in this run have left their shelves via the
+			// index's cascade; persist that before failing, or shelves.toml keeps
+			// naming files that no longer exist.
+			return errors.Join(err, a.saveShelves())
 		}
 		library.PruneEmptyDirs(cfg.LibraryRoot, b.Path)
 		if !*quiet {

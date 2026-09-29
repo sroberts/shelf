@@ -9,8 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/sroberts/shelf/internal/library"
 )
 
 var binPath string
@@ -320,5 +323,254 @@ func TestE2ERm(t *testing.T) {
 	}
 	if _, err := os.Stat(epub2); !os.IsNotExist(err) {
 		t.Errorf("epub2 still exists: %v", err)
+	}
+}
+
+func isolatedEnv(testDir string) []string {
+	return []string{
+		"XDG_DATA_HOME=" + filepath.Join(testDir, "data"),
+		"XDG_CONFIG_HOME=" + filepath.Join(testDir, "config"),
+		"XDG_STATE_HOME=" + filepath.Join(testDir, "state"),
+		"XDG_CACHE_HOME=" + filepath.Join(testDir, "cache"),
+	}
+}
+
+// indexID reads a book's id straight from index.db, since the CLI never prints
+// one: that is exactly why a bare number must not be read as an id.
+func indexID(t *testing.T, testDir, title string) int64 {
+	t.Helper()
+	db, err := library.Open(filepath.Join(testDir, "data", "shelf", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	books, err := db.Search(title, library.SearchOptions{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 {
+		t.Fatalf("search %q found %d books, want 1", title, len(books))
+	}
+	return books[0].ID
+}
+
+// Every command that takes a BOOK argument resolves it the same way, and each
+// is exercised here rather than only through resolveBook, so a command that
+// stops going through it (or pre-parses numbers itself) is caught. The bare
+// live id is the case that matters: before `id:` was required, a number that
+// matched no title fell back to an id lookup, so `rm -y 1999` or
+// `meta 1999 --set ...` could delete or rewrite an unrelated book.
+func TestE2EBookReferences(t *testing.T) {
+	const target = "Dune"
+
+	shelvesHas := func(t *testing.T, testDir, name string) bool {
+		t.Helper()
+		toml, err := os.ReadFile(filepath.Join(testDir, "config", "shelf", "shelves.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Contains(string(toml), name)
+	}
+
+	type fixture struct {
+		testDir, libDir, dune string
+		env                   []string
+	}
+
+	surfaces := []struct {
+		name string
+		// prep runs after the scan, to put the library in the state the command acts on.
+		prep [][]string
+		args func(ref string) []string
+		// applied reports whether the command acted on the target book.
+		applied func(t *testing.T, lib fixture, stdout string) bool
+	}{
+		{
+			name: "rm",
+			args: func(ref string) []string { return []string{"rm", "-y", ref} },
+			applied: func(t *testing.T, lib fixture, _ string) bool {
+				_, err := os.Stat(lib.dune)
+				return os.IsNotExist(err)
+			},
+		},
+		{
+			name: "delete",
+			args: func(ref string) []string { return []string{"delete", "-y", ref} },
+			applied: func(t *testing.T, lib fixture, _ string) bool {
+				_, err := os.Stat(lib.dune)
+				return os.IsNotExist(err)
+			},
+		},
+		{
+			name: "meta",
+			args: func(ref string) []string { return []string{"meta", ref} },
+			applied: func(t *testing.T, lib fixture, stdout string) bool {
+				return strings.Contains(stdout, target)
+			},
+		},
+		{
+			name: "meta --set",
+			args: func(ref string) []string { return []string{"meta", ref, "--set", "title=Retitled"} },
+			applied: func(t *testing.T, lib fixture, _ string) bool {
+				out, stderr, code := runShelfWithEnv(t, lib.env, "--library", lib.libDir, "meta", lib.dune, "--json")
+				if code != 0 {
+					t.Fatalf("meta --json failed: code %d: %s", code, stderr)
+				}
+				var got struct{ Title string }
+				if err := json.Unmarshal([]byte(out), &got); err != nil {
+					t.Fatalf("meta --json: %v\n%s", err, out)
+				}
+				return got.Title == "Retitled"
+			},
+		},
+		{
+			name: "shelf add",
+			prep: [][]string{{"shelf", "create", "--manual", "scifi"}},
+			args: func(ref string) []string { return []string{"shelf", "add", "scifi", ref} },
+			applied: func(t *testing.T, lib fixture, _ string) bool {
+				return shelvesHas(t, lib.testDir, "Dune.epub")
+			},
+		},
+		{
+			name: "shelf remove",
+			prep: [][]string{
+				{"shelf", "create", "--manual", "scifi"},
+				{"shelf", "add", "scifi", target},
+			},
+			args: func(ref string) []string { return []string{"shelf", "remove", "scifi", ref} },
+			applied: func(t *testing.T, lib fixture, _ string) bool {
+				return !shelvesHas(t, lib.testDir, "Dune.epub")
+			},
+		},
+	}
+
+	for _, sf := range surfaces {
+		t.Run(sf.name, func(t *testing.T) {
+			// A fresh library per reference, so each one starts from the same state.
+			setup := func(t *testing.T) (fixture, int64) {
+				t.Helper()
+				testDir := t.TempDir()
+				lib := fixture{
+					testDir: testDir,
+					libDir:  filepath.Join(testDir, "books"),
+					env:     isolatedEnv(testDir),
+				}
+				lib.dune = filepath.Join(lib.libDir, "Herbert", "Dune.epub")
+				createTestEPUB(t, filepath.Join(lib.libDir, "Butler", "Kindred.epub"), "Kindred", "Octavia Butler")
+				createTestEPUB(t, lib.dune, target, "Frank Herbert")
+				createTestEPUB(t, filepath.Join(lib.libDir, "Le Guin", "Earthsea.epub"), "A Wizard of Earthsea", "Ursula K. Le Guin")
+				for _, args := range append([][]string{{"scan", lib.libDir}}, sf.prep...) {
+					if _, stderr, code := runShelfWithEnv(t, lib.env, append([]string{"--library", lib.libDir}, args...)...); code != 0 {
+						t.Fatalf("%v failed: code %d: %s", args, code, stderr)
+					}
+				}
+				return lib, indexID(t, testDir, target)
+			}
+
+			refs := []struct {
+				name    string
+				ref     func(id int64) string
+				wantErr string // empty means the command must succeed and act on the target
+			}{
+				{"bare live id", func(id int64) string { return fmt.Sprint(id) }, "no book matches"},
+				{"bare year", func(int64) string { return "1999" }, "no book matches"},
+				{"malformed id", func(int64) string { return "id:abc" }, "invalid book id"},
+				{"unknown id", func(int64) string { return "id:99999" }, "no book with id 99999"},
+				{"explicit id", func(id int64) string { return fmt.Sprintf("id:%d", id) }, ""},
+			}
+			for _, rc := range refs {
+				t.Run(rc.name, func(t *testing.T) {
+					lib, id := setup(t)
+					ref := rc.ref(id)
+					stdout, stderr, code := runShelfWithEnv(t, lib.env, append([]string{"--library", lib.libDir}, sf.args(ref)...)...)
+
+					if rc.wantErr == "" {
+						if code != 0 {
+							t.Fatalf("%s %s failed: code %d: %s", sf.name, ref, code, stderr)
+						}
+						if !sf.applied(t, lib, stdout) {
+							t.Errorf("%s %s succeeded but did not act on %s", sf.name, ref, target)
+						}
+						return
+					}
+
+					if code == 0 {
+						t.Errorf("%s %s succeeded, want failure %q", sf.name, ref, rc.wantErr)
+					}
+					if !strings.Contains(stderr, rc.wantErr) {
+						t.Errorf("%s %s stderr = %q, want %q", sf.name, ref, stderr, rc.wantErr)
+					}
+					if sf.applied(t, lib, stdout) {
+						t.Errorf("%s %s was rejected but still acted on %s", sf.name, ref, target)
+					}
+				})
+			}
+		})
+	}
+}
+
+// When `shelf rm A B` deletes A and then fails on B, A has already left its
+// shelves in the index. shelves.toml is the one record that survives an index
+// rebuild, so it must be saved on the error path too, or it keeps naming a
+// file that no longer exists.
+func TestE2ERmPartialFailureSavesShelves(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("relies on POSIX directory permissions")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+
+	testDir := t.TempDir()
+	libDir := filepath.Join(testDir, "books")
+	env := isolatedEnv(testDir)
+
+	kindred := filepath.Join(libDir, "Butler", "Kindred.epub")
+	earthsea := filepath.Join(libDir, "Le Guin", "Earthsea.epub")
+	createTestEPUB(t, kindred, "Kindred", "Octavia Butler")
+	createTestEPUB(t, earthsea, "A Wizard of Earthsea", "Ursula K. Le Guin")
+
+	for _, args := range [][]string{
+		{"scan", libDir},
+		{"shelf", "create", "--manual", "scifi"},
+		{"shelf", "add", "scifi", "Kindred"},
+		{"shelf", "add", "scifi", "Earthsea"},
+	} {
+		if _, stderr, code := runShelfWithEnv(t, env, append([]string{"--library", libDir}, args...)...); code != 0 {
+			t.Fatalf("%v failed: code %d: %s", args, code, stderr)
+		}
+	}
+
+	// Removing Earthsea's file fails while its directory is read-only.
+	earthseaDir := filepath.Dir(earthsea)
+	if err := os.Chmod(earthseaDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(earthseaDir, 0o755) })
+
+	_, stderr, code := runShelfWithEnv(t, env, "--library", libDir, "rm", "-y", "Kindred", "Earthsea")
+	if code == 0 {
+		t.Fatal("rm succeeded although Earthsea could not be removed")
+	}
+	if !strings.Contains(stderr, "permission denied") {
+		t.Errorf("stderr = %q, want the permission error", stderr)
+	}
+
+	if _, err := os.Stat(kindred); !os.IsNotExist(err) {
+		t.Errorf("Kindred still exists: %v", err)
+	}
+	if _, err := os.Stat(earthsea); err != nil {
+		t.Errorf("Earthsea was removed despite the failure: %v", err)
+	}
+
+	toml, err := os.ReadFile(filepath.Join(testDir, "config", "shelf", "shelves.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(toml), "Kindred.epub") {
+		t.Errorf("shelves.toml still lists the deleted Kindred:\n%s", toml)
+	}
+	if !strings.Contains(string(toml), "Earthsea.epub") {
+		t.Errorf("shelves.toml lost Earthsea, which was not deleted:\n%s", toml)
 	}
 }

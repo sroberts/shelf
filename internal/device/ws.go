@@ -169,6 +169,19 @@ func (c *Client) uploadWS(ctx context.Context, dest Path, r io.Reader, size int6
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-readErrs:
+		// A device refusing START sends ERROR and then closes, so both become
+		// ready at once, as in waitForDone. readLoop queues every message
+		// before it reports the error, so a refusal is already buffered here;
+		// losing it to the close would retry over HTTP an upload the device
+		// just turned down. Only ERROR counts: a READY followed by a close is
+		// still a transport that never carried the file.
+		select {
+		case msg, ok := <-msgs:
+			if ok && strings.HasPrefix(msg, "ERROR") {
+				return ParseDeviceError(msg)
+			}
+		default:
+		}
 		return fmt.Errorf("%w: waiting for READY: %v", errWSUnavailable, err)
 	case msg := <-msgs:
 		switch {

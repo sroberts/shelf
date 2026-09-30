@@ -326,6 +326,69 @@ func TestWSUploadErrorStrings(t *testing.T) {
 	}
 }
 
+// A device refusing START sends ERROR and then closes, so readLoop can have
+// delivered both the refusal and the read error before awaitReady looks. An
+// unbiased select then reported the close about half the time, which counted
+// as "websocket unavailable" and retried over HTTP an upload the device had
+// just refused. TestWSUploadErrorStrings only hit that when a runner happened
+// to be slow; loading both channels up front reaches it every iteration, so a
+// regression survives 200 of them with odds of 2^-200.
+func TestAwaitReadyPrefersRefusalOverClose(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		msgs := make(chan string, 1)
+		readErrs := make(chan error, 1)
+		msgs <- "ERROR:Write failed - disk full?"
+		readErrs <- errors.New("connection closed")
+
+		err := awaitReady(context.Background(), msgs, readErrs)
+		if !errors.Is(err, ErrDiskFull) {
+			t.Fatalf("iteration %d: err = %v, want %v", i, err, ErrDiskFull)
+		}
+		if errors.Is(err, errWSUnavailable) {
+			t.Fatalf("iteration %d: a refusal was reported as transport unavailability", i)
+		}
+	}
+}
+
+func TestAwaitReady(t *testing.T) {
+	closed := errors.New("connection closed")
+	tests := []struct {
+		name    string
+		msg     string // queued before the call, when non-empty
+		readErr error  // queued before the call, when non-nil
+		want    error  // nil means awaitReady must succeed
+	}{
+		{name: "ready", msg: "READY", want: nil},
+		{name: "refusal", msg: "ERROR:Upload already in progress", want: ErrUploadInProgress},
+		{name: "unexpected message", msg: "HELLO", want: errWSUnavailable},
+		// Nothing was said, so the transport never worked and HTTP is safe.
+		{name: "close without a verdict", readErr: closed, want: errWSUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msgs := make(chan string, 1)
+			readErrs := make(chan error, 1)
+			if tt.msg != "" {
+				msgs <- tt.msg
+			}
+			if tt.readErr != nil {
+				readErrs <- tt.readErr
+			}
+
+			err := awaitReady(context.Background(), msgs, readErrs)
+			if tt.want == nil {
+				if err != nil {
+					t.Fatalf("err = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.want) {
+				t.Errorf("err = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
 // A failure partway through must be reported, not silently truncated.
 func TestWSUploadErrorMidTransfer(t *testing.T) {
 	p := newWSPeer(t)

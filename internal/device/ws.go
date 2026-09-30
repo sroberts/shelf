@@ -165,37 +165,8 @@ func (c *Client) uploadWS(ctx context.Context, dest Path, r io.Reader, size int6
 	msgs, readErrs := readLoop(ctx, conn)
 
 	// Wait for READY before sending any bytes.
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-readErrs:
-		// A device refusing START sends ERROR and then closes, so both become
-		// ready at once, as in waitForDone. readLoop queues every message
-		// before it reports the error, so a refusal is already buffered here;
-		// losing it to the close would retry over HTTP an upload the device
-		// just turned down. Only ERROR counts: a READY followed by a close is
-		// still a transport that never carried the file.
-		select {
-		case msg, ok := <-msgs:
-			if ok && strings.HasPrefix(msg, "ERROR") {
-				return ParseDeviceError(msg)
-			}
-		default:
-		}
-		return fmt.Errorf("%w: waiting for READY: %v", errWSUnavailable, err)
-	case msg := <-msgs:
-		switch {
-		case strings.HasPrefix(msg, "READY"):
-			// proceed
-		case strings.HasPrefix(msg, "ERROR"):
-			// The device answered, so the transport works; this is a real
-			// device-level refusal and must not fall back to HTTP.
-			return ParseDeviceError(msg)
-		default:
-			return fmt.Errorf("%w: expected READY, got %q", errWSUnavailable, msg)
-		}
-	case <-time.After(wsHandshakeTimeout):
-		return fmt.Errorf("%w: timed out waiting for READY", errWSUnavailable)
+	if err := awaitReady(ctx, msgs, readErrs); err != nil {
+		return err
 	}
 
 	finished, err := c.sendChunks(ctx, conn, dest, r, size, opts, msgs, readErrs)
@@ -294,6 +265,44 @@ func (c *Client) sendChunks(
 		return false, fmt.Errorf("%w: declared %d bytes but sent %d", ErrInvalidStart, size, sent)
 	}
 	return false, nil
+}
+
+// awaitReady waits for the device's answer to START, returning nil once it
+// says READY. It takes the channels readLoop feeds rather than the connection
+// so the ordering between a verdict and a close can be tested directly.
+func awaitReady(ctx context.Context, msgs <-chan string, readErrs <-chan error) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-readErrs:
+		// A device refusing START sends ERROR and then closes, so both become
+		// ready at once, as in waitForDone. readLoop queues every message
+		// before it reports the error, so a refusal is already buffered here;
+		// losing it to the close would retry over HTTP an upload the device
+		// just turned down. Only ERROR counts: a READY followed by a close is
+		// still a transport that never carried the file.
+		select {
+		case msg, ok := <-msgs:
+			if ok && strings.HasPrefix(msg, "ERROR") {
+				return ParseDeviceError(msg)
+			}
+		default:
+		}
+		return fmt.Errorf("%w: waiting for READY: %v", errWSUnavailable, err)
+	case msg := <-msgs:
+		switch {
+		case strings.HasPrefix(msg, "READY"):
+			return nil
+		case strings.HasPrefix(msg, "ERROR"):
+			// The device answered, so the transport works; this is a real
+			// device-level refusal and must not fall back to HTTP.
+			return ParseDeviceError(msg)
+		default:
+			return fmt.Errorf("%w: expected READY, got %q", errWSUnavailable, msg)
+		}
+	case <-time.After(wsHandshakeTimeout):
+		return fmt.Errorf("%w: timed out waiting for READY", errWSUnavailable)
+	}
 }
 
 // waitForDone blocks until the device reports completion or failure.

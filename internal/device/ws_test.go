@@ -137,8 +137,20 @@ func (p *wsPeer) handle(w http.ResponseWriter, r *http.Request) {
 	// HTTP handler instead would flag the overlap between one connection's
 	// graceful teardown and the next one's dial, which is not a client
 	// violation and made this test fail on slower runners.
+	//
+	// The transfer also ends before the verdict is written, not when the
+	// handler returns: the client releases its upload lock the moment it reads
+	// DONE or ERROR, so a leave deferred past that write let a busy runner
+	// count the next upload's START as an overlap.
 	p.enter()
-	defer p.leave()
+	finished := false
+	finish := func() {
+		if !finished {
+			finished = true
+			p.leave()
+		}
+	}
+	defer finish()
 
 	total := parseStartSize(string(data))
 
@@ -166,6 +178,7 @@ func (p *wsPeer) handle(w http.ResponseWriter, r *http.Request) {
 		p.mu.Unlock()
 
 		if errMid != "" && received >= at {
+			finish()
 			conn.Write(ctx, websocket.MessageText, []byte("ERROR:"+errMid))
 			return
 		}
@@ -179,11 +192,11 @@ func (p *wsPeer) handle(w http.ResponseWriter, r *http.Request) {
 		if received >= total {
 			conn.Write(ctx, websocket.MessageText,
 				[]byte(fmt.Sprintf("PROGRESS:%d:%d", received, total)))
-			conn.Write(ctx, websocket.MessageText, []byte("DONE"))
-
 			p.mu.Lock()
 			p.done = true
 			p.mu.Unlock()
+			finish()
+			conn.Write(ctx, websocket.MessageText, []byte("DONE"))
 			return
 		}
 	}

@@ -106,6 +106,7 @@ shelf scan [--deep] [--covers]          Index the library directory
 shelf ls [QUERY] [--json] [--sort KEY]  List and search books
 shelf tags [--json]                     List tags with book counts
 shelf meta BOOK [--set FIELD=VALUE]     Show or edit book metadata in place
+shelf rm BOOK... [--yes] [--dry-run]    Delete books from the index and disk
 shelf import FILE... [--move|--link]    Add files to the library
 shelf convert FILE... [--out DIR]       Convert PDF or TXT to EPUB
 shelf optimize FILE... --profile NAME   Rebuild an EPUB for a device panel
@@ -120,6 +121,11 @@ shelf doctor [--offline]                Check configuration and index health
 shelf version [--full]                  Print version information
 shelf --no-tui                          Force CLI mode (headless)
 ```
+
+`BOOK` is a file path, a search that matches exactly one book (`shelf meta earthsea`), or an
+index id written as `id:42`. `shelf meta` and `shelf ls --json` show each book's id. Ids are
+renumbered whenever the index is rebuilt, so look one up just before using it. A bare number
+is treated as a search term, never as an id.
 
 ### Search Syntax
 

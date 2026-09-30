@@ -325,6 +325,9 @@ func printMetadata(b *library.Book) {
 	}
 
 	row("path", b.Path)
+	// Printed in the form BOOK arguments accept, so it can be pasted straight
+	// into `shelf rm` or `shelf meta`.
+	row("id", fmt.Sprintf("id:%d", b.ID))
 	row("title", b.DisplayTitle())
 	row("author", b.DisplayAuthor())
 	row("author sort", b.AuthorSort)

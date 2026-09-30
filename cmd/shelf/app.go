@@ -152,6 +152,9 @@ func emitJSON(v any) error {
 // than marshaling library.Book so that internal field changes cannot silently
 // alter the documented output of `shelf ls --json`.
 type bookJSON struct {
+	// ID is the index row id, accepted back as `id:N` wherever a BOOK is. It
+	// is not stable: rebuilding index.db renumbers every book.
+	ID          int64             `json:"id"`
 	Path        string            `json:"path"`
 	Title       string            `json:"title"`
 	Authors     []string          `json:"authors,omitempty"`
@@ -174,6 +177,7 @@ func toJSON(b *library.Book) bookJSON { return toJSONWithProgress(b, nil) }
 
 func toJSONWithProgress(b *library.Book, byDoc map[string]kosync.Progress) bookJSON {
 	return bookJSON{
+		ID:          b.ID,
 		Path:        b.Path,
 		Title:       b.DisplayTitle(),
 		Authors:     b.Authors,

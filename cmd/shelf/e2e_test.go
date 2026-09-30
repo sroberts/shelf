@@ -574,3 +574,98 @@ func TestE2ERmPartialFailureSavesShelves(t *testing.T) {
 		t.Errorf("shelves.toml lost Earthsea, which was not deleted:\n%s", toml)
 	}
 }
+
+// `id:N` is only usable if the CLI prints ids, and the id it prints must be
+// the one resolveBook accepts. Each output that carries an id is read back
+// here and fed into another command, so a field that goes missing or drifts
+// from the index fails rather than silently leaving users with no way to
+// find one.
+func TestE2EShowsBookIDs(t *testing.T) {
+	testDir := t.TempDir()
+	libDir := filepath.Join(testDir, "books")
+	env := isolatedEnv(testDir)
+	shelf := func(args ...string) string {
+		t.Helper()
+		stdout, stderr, code := runShelfWithEnv(t, env, append([]string{"--library", libDir}, args...)...)
+		if code != 0 {
+			t.Fatalf("%v failed: code %d: %s", args, code, stderr)
+		}
+		return stdout
+	}
+
+	createTestEPUB(t, filepath.Join(libDir, "Butler", "Kindred.epub"), "Kindred", "Octavia Butler")
+	createTestEPUB(t, filepath.Join(libDir, "Herbert", "Dune.epub"), "Dune", "Frank Herbert")
+	shelf("scan", libDir)
+	shelf("shelf", "create", "--manual", "scifi")
+	shelf("shelf", "add", "scifi", "Dune")
+
+	duneID := indexID(t, testDir, "Dune")
+	wantRef := fmt.Sprintf("id:%d", duneID)
+
+	type book struct {
+		ID    int64  `json:"id"`
+		Path  string `json:"path"`
+		Title string `json:"title"`
+	}
+	decodeLines := func(t *testing.T, out string) []book {
+		t.Helper()
+		var books []book
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			var b book
+			if err := json.Unmarshal([]byte(line), &b); err != nil {
+				t.Fatalf("decode %q: %v", line, err)
+			}
+			books = append(books, b)
+		}
+		return books
+	}
+
+	t.Run("ls --json", func(t *testing.T) {
+		books := decodeLines(t, shelf("ls", "--json"))
+		if len(books) != 2 {
+			t.Fatalf("ls --json listed %d books, want 2", len(books))
+		}
+		seen := map[int64]bool{}
+		for _, b := range books {
+			if b.ID == 0 {
+				t.Errorf("%s has no id", b.Title)
+			}
+			if seen[b.ID] {
+				t.Errorf("id %d is shared by two books", b.ID)
+			}
+			seen[b.ID] = true
+			if want := indexID(t, testDir, b.Title); b.ID != want {
+				t.Errorf("%s: id = %d, index has %d", b.Title, b.ID, want)
+			}
+		}
+	})
+
+	t.Run("meta", func(t *testing.T) {
+		var idRow string
+		for _, line := range strings.Split(shelf("meta", "Dune"), "\n") {
+			if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "id" {
+				idRow = fields[1]
+			}
+		}
+		if idRow != wantRef {
+			t.Fatalf("meta id row = %q, want %q", idRow, wantRef)
+		}
+		// Printed in reference form, so it must work as one unchanged.
+		if got := decodeLines(t, shelf("meta", idRow, "--json")); got[0].Title != "Dune" {
+			t.Errorf("meta %s resolved to %q, want Dune", idRow, got[0].Title)
+		}
+	})
+
+	t.Run("meta --json", func(t *testing.T) {
+		if got := decodeLines(t, shelf("meta", "Dune", "--json")); got[0].ID != duneID {
+			t.Errorf("meta --json id = %d, want %d", got[0].ID, duneID)
+		}
+	})
+
+	t.Run("shelf show --json", func(t *testing.T) {
+		books := decodeLines(t, shelf("shelf", "show", "scifi", "--json"))
+		if len(books) != 1 || books[0].ID != duneID {
+			t.Errorf("shelf show --json = %+v, want Dune with id %d", books, duneID)
+		}
+	})
+}

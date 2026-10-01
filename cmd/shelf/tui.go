@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/sroberts/shelf/internal/tui"
 )
@@ -40,11 +40,8 @@ func runTUI(ctx context.Context, a *app) error {
 
 	model := tui.New(ctx, &tui.App{Config: cfg, DB: db, Log: logger})
 
-	program := tea.NewProgram(model,
-		tea.WithContext(ctx),
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
+	// The alternate screen and mouse mode are declared by the model's View.
+	program := tea.NewProgram(model, tea.WithContext(ctx))
 
 	if _, err := program.Run(); err != nil {
 		logger.Error("tui exited with an error", "err", err)

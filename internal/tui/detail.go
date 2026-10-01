@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/sroberts/shelf/internal/kosync"
 	"github.com/sroberts/shelf/internal/library"
@@ -61,18 +61,25 @@ type detailModel struct {
 // escape sequences the CI terminal happened to support.
 func newDetailModel(styles Styles, graphics GraphicsMode) detailModel {
 	bar := progress.New(
-		progress.WithDefaultGradient(),
+		progress.WithDefaultBlend(),
 		progress.WithoutPercentage(),
 	)
 
 	return detailModel{
 		styles:   styles,
-		vp:       viewport.New(0, 0),
+		vp:       viewport.New(),
 		bar:      bar,
 		graphics: graphics,
 		visible:  true,
 		covers:   map[string]string{},
 	}
+}
+
+// setStyles applies a new theme and redraws, since the content is rendered
+// into the viewport ahead of time rather than on every View.
+func (m *detailModel) setStyles(styles Styles) {
+	m.styles = styles
+	m.refresh()
 }
 
 // minWidthForDetail is the narrowest terminal that gets a side panel.
@@ -94,9 +101,9 @@ func detailWidth(total int) int {
 func (m *detailModel) setSize(w, h int) {
 	m.width, m.height = w, h
 	// The viewport renders inside the panel border and padding.
-	m.vp.Width = max(1, w-4)
-	m.vp.Height = max(1, h-2)
-	m.bar.Width = max(6, m.vp.Width-6)
+	m.vp.SetWidth(max(1, w-4))
+	m.vp.SetHeight(max(1, h-2))
+	m.bar.SetWidth(max(6, m.vp.Width()-6))
 	m.refresh()
 }
 
@@ -129,19 +136,21 @@ func (m detailModel) View() string {
 		return ""
 	}
 	if m.book == nil {
-		return m.styles.Panel.Width(m.width - 2).Height(m.height - 2).
+		return m.styles.Panel.Width(m.width).Height(m.height).
 			Render(m.styles.Subtle.Render("no book selected"))
 	}
 
 	body := m.vp.View()
-	if m.vp.TotalLineCount() > m.vp.Height {
+	if m.vp.TotalLineCount() > m.vp.Height() {
 		// Say the panel has more in it. Without this the cut is invisible and
 		// reads as missing metadata rather than as scrollable content.
 		body += "\n" + m.styles.Subtle.Render(
 			fmt.Sprintf("  ⇧↑/⇧↓  %d%%", int(m.vp.ScrollPercent()*100)))
 	}
 
-	return m.styles.Panel.Width(m.width - 2).Height(m.height - 2).Render(body)
+	// Lip Gloss v2 counts the border inside Width and Height, so the panel is
+	// sized to its full allotment rather than to the space within its border.
+	return m.styles.Panel.Width(m.width).Height(m.height).Render(body)
 }
 
 // content builds the panel body.
@@ -150,7 +159,7 @@ func (m detailModel) content() string {
 	if b == nil {
 		return ""
 	}
-	w := m.vp.Width
+	w := m.vp.Width()
 
 	var sections []string
 
@@ -276,7 +285,7 @@ func (m detailModel) fields() string {
 	for _, r := range rows {
 		labelWidth = max(labelWidth, lipgloss.Width(r[0]))
 	}
-	valueWidth := max(1, m.vp.Width-labelWidth-2)
+	valueWidth := max(1, m.vp.Width()-labelWidth-2)
 
 	var out []string
 	for _, r := range rows {
@@ -298,7 +307,7 @@ func (m detailModel) cover() string {
 		return ""
 	}
 
-	cols := min(m.vp.Width, 20)
+	cols := min(m.vp.Width(), 20)
 	rows := cols / 2
 	if cols < 6 || rows < 3 {
 		return ""

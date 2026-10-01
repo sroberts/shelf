@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/sroberts/shelf/internal/config"
 )
@@ -38,7 +38,7 @@ func TestDevicesScreenAgainstHardware(t *testing.T) {
 	}}
 
 	frame := stripANSI(captureFrameWith(t, app, []tea.Msg{
-		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")},
+		tea.KeyPressMsg{Code: '2', Text: "2"},
 	}))
 
 	t.Logf("devices screen:\n%s", frame)
@@ -86,8 +86,8 @@ func TestPushWorkflowReachesPlanPreview(t *testing.T) {
 	}}
 
 	frame := stripANSI(captureFrameWith(t, app, []tea.Msg{
-		tea.KeyMsg{Type: tea.KeySpace}, // select the first book
-		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")},
+		tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}, // select the first book
+		tea.KeyPressMsg{Code: 's', Text: "s"},
 	}))
 
 	t.Logf("sync screen:\n%s", frame)

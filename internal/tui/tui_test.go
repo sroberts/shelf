@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/exp/teatest"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/library"
@@ -68,7 +68,7 @@ func TestLibraryRendersBooks(t *testing.T) {
 		return bytes.Contains(out, []byte("Earthsea")) && bytes.Contains(out, []byte("Moby-Dick"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 }
 
@@ -84,19 +84,21 @@ func TestScreenCycling(t *testing.T) {
 	}, teatest.WithDuration(5*time.Second))
 
 	// Jump straight to Devices with its number key.
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	tm.Send(tea.KeyPressMsg{Code: '2', Text: "2"})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("No devices")) ||
 			bytes.Contains(out, []byte("probing"))
 	}, teatest.WithDuration(5*time.Second))
 
-	// And to Sync.
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
+	// And to Sync. The output is the renderer's byte stream, and Bubble Tea v2
+	// only redraws cells that changed: "No " is already on screen from "No
+	// devices", so match the part that is written.
+	tm.Send(tea.KeyPressMsg{Code: '3', Text: "3"})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("No sync in progress"))
+		return bytes.Contains(out, []byte("sync in progress"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 }
 
@@ -116,23 +118,29 @@ func TestFilterCapturesKeys(t *testing.T) {
 	}, teatest.WithDuration(5*time.Second))
 
 	// Open the filter and type a word containing "q" and "s" (quit and sync).
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	tm.Send(tea.KeyPressMsg{Code: '/', Text: "/"})
 	for _, r := range "quicksilver" {
-		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		tm.Send(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
 
-	// The program must still be alive and showing the typed text.
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("quicksilver"))
-	}, teatest.WithDuration(5*time.Second))
-
-	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
-	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return bytes.Contains(out, []byte("Quicksilver"))
-	}, teatest.WithDuration(5*time.Second))
-
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
-	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
+	// Judged on the final model rather than the output stream: Bubble Tea v2
+	// redraws only changed cells, so typed text reaches the stream one
+	// character per frame and never as the whole word. If the typed "q" had
+	// quit, Enter would never have run and the query would be empty; if the
+	// "s" had been taken as a command, a sync would have left the idle phase.
+	final, ok := tm.FinalModel(t, teatest.WithFinalTimeout(3*time.Second)).(Model)
+	if !ok {
+		t.Fatal("final model is not a tui.Model")
+	}
+	if final.library.query != "quicksilver" {
+		t.Errorf("filter query = %q, want %q", final.library.query, "quicksilver")
+	}
+	if final.screen != ScreenLibrary || final.sync.phase != phaseIdle {
+		t.Errorf("typing into the filter ran a command: screen %v, sync phase %v",
+			final.screen, final.sync.phase)
+	}
 }
 
 func TestHelpToggle(t *testing.T) {
@@ -145,14 +153,14 @@ func TestHelpToggle(t *testing.T) {
 		return bytes.Contains(out, []byte("A Book"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	tm.Send(tea.KeyPressMsg{Code: '?', Text: "?"})
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		// The expanded help exposes bindings the short strip omits.
 		return bytes.Contains(out, []byte("visual select")) ||
 			bytes.Contains(out, []byte("select all"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 }
 
@@ -168,7 +176,7 @@ func TestEmptyLibraryIsExplained(t *testing.T) {
 			bytes.Contains(out, []byte("library is empty"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 }
 
@@ -176,7 +184,7 @@ func TestEmptyLibraryIsExplained(t *testing.T) {
 
 func TestSelectionTracksPathsNotIndices(t *testing.T) {
 	app := testApp(t)
-	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles())
+	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles(true))
 	m.books = []*library.Book{
 		book("/lib/a.epub", "A", "Author A"),
 		book("/lib/b.epub", "B", "Author B"),
@@ -200,7 +208,7 @@ func TestSelectionTracksPathsNotIndices(t *testing.T) {
 
 func TestVisualSelectionCoversRange(t *testing.T) {
 	app := testApp(t)
-	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles())
+	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles(true))
 	for _, p := range []string{"/a", "/b", "/c", "/d"} {
 		m.books = append(m.books, book(p, p, "Author"))
 	}
@@ -425,7 +433,7 @@ func TestOpenLogDegradesGracefully(t *testing.T) {
 }
 
 func TestGlyphStylesAreDistinct(t *testing.T) {
-	s := DefaultStyles()
+	s := DefaultStyles(true)
 	glyphs := []string{GlyphSynced, GlyphPending, GlyphAbsent, GlyphOrphan, GlyphUnknown}
 
 	seen := map[string]bool{}
@@ -466,7 +474,7 @@ func first(s string, n int) string {
 func TestLibraryReadColumnAppearsOnlyWithProgress(t *testing.T) {
 	app := testApp(t, book("/lib/a.epub", "A Book", "An Author"))
 
-	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles())
+	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles(true))
 	m.setSize(100, 20)
 	m.loading = false
 	m.books = []*library.Book{book("/lib/a.epub", "A Book", "An Author")}
@@ -490,7 +498,7 @@ func TestLibraryReadColumnAppearsOnlyWithProgress(t *testing.T) {
 func TestLibraryShowsDoneForFinishedBooks(t *testing.T) {
 	app := testApp(t, book("/lib/a.epub", "A Book", "An Author"))
 
-	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles())
+	m := newLibraryModel(app, DefaultKeyMap(), DefaultStyles(true))
 	m.setSize(100, 20)
 	m.loading = false
 	m.books = []*library.Book{book("/lib/a.epub", "A Book", "An Author")}

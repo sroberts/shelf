@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/progress"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/progress"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/convert"
@@ -73,10 +73,12 @@ type syncModel struct {
 }
 
 func newSyncModel(app *App, keys KeyMap, styles Styles) syncModel {
-	bar := progress.New(progress.WithDefaultGradient())
-	bar.Width = 40
+	bar := progress.New(progress.WithDefaultBlend())
+	bar.SetWidth(40)
 	return syncModel{app: app, keys: keys, styles: styles, bar: bar}
 }
+
+func (m *syncModel) setStyles(styles Styles) { m.styles = styles }
 
 // Messages.
 type (
@@ -104,7 +106,7 @@ func (m syncModel) capturing() bool { return m.phase == phaseConfirm }
 
 func (m *syncModel) setSize(w, h int) {
 	m.width, m.height = w, h
-	m.bar.Width = clamp(w-20, 10, 60)
+	m.bar.SetWidth(clamp(w-20, 10, 60))
 }
 
 // buildPlan resolves the device, reads its listing, and runs the planner.
@@ -309,7 +311,7 @@ func (m syncModel) Update(ctx context.Context, msg tea.Msg) (syncModel, tea.Cmd)
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.bar.Width = clamp(msg.Width-20, 10, 60)
+		m.bar.SetWidth(clamp(msg.Width-20, 10, 60))
 		return m, nil
 
 	case planRequestMsg:
@@ -355,13 +357,11 @@ func (m syncModel) Update(ctx context.Context, msg tea.Msg) (syncModel, tea.Cmd)
 		return m, nil
 
 	case progress.FrameMsg:
-		bar, cmd := m.bar.Update(msg)
-		if b, ok := bar.(progress.Model); ok {
-			m.bar = b
-		}
+		var cmd tea.Cmd
+		m.bar, cmd = m.bar.Update(msg)
 		return m, cmd
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.updateKeys(ctx, msg)
 	}
 	return m, nil
@@ -408,7 +408,7 @@ func (m *syncModel) appendEvent(line string) {
 	}
 }
 
-func (m syncModel) updateKeys(ctx context.Context, msg tea.KeyMsg) (syncModel, tea.Cmd) {
+func (m syncModel) updateKeys(ctx context.Context, msg tea.KeyPressMsg) (syncModel, tea.Cmd) {
 	switch m.phase {
 	case phaseConfirm:
 		switch {

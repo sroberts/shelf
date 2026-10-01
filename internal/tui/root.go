@@ -16,10 +16,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/library"
@@ -92,21 +92,22 @@ func New(ctx context.Context, app *App) Model {
 	ctx, cancel := context.WithCancel(ctx)
 
 	keys := DefaultKeyMap()
-	styles := DefaultStyles()
+	// Dark until the terminal says otherwise: Init asks, and the answer
+	// restyles everything. Dark is also what Lip Gloss v1 assumed when a
+	// terminal did not answer.
+	styles := DefaultStyles(true)
 
 	h := help.New()
 	h.ShowAll = false
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
-	sp.Style = styles.Accent
 
 	lib := newLibraryModel(app, keys, styles)
 	lib.detail.graphics = DetectGraphics(app.Config.UI.Graphics)
 
-	return Model{
+	m := Model{
 		app:     app,
 		keys:    keys,
-		styles:  styles,
 		help:    h,
 		spinner: sp,
 		screen:  ScreenLibrary,
@@ -116,11 +117,27 @@ func New(ctx context.Context, app *App) Model {
 		devices: newDevicesModel(app, keys, styles),
 		sync:    newSyncModel(app, keys, styles),
 	}
+	m.setStyles(styles)
+	return m
+}
+
+// setStyles applies a theme to the root and every screen. Each screen holds
+// its own copy, because models are passed by value and cannot share one.
+func (m *Model) setStyles(styles Styles) {
+	m.styles = styles
+	m.help.Styles = help.DefaultStyles(styles.Dark)
+	m.spinner.Style = styles.Accent
+	m.library.setStyles(styles)
+	m.devices.setStyles(styles)
+	m.sync.setStyles(styles)
 }
 
 // Init starts the initial loads.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
+		// Asked here, once the program owns the terminal, rather than at
+		// package init as Lip Gloss v1 did for every command.
+		tea.RequestBackgroundColor,
 		m.library.load(m.ctx),
 		m.devices.probe(m.ctx),
 		m.loadStats(),
@@ -157,8 +174,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
-		m.help.Width = msg.Width
+		m.help.SetWidth(msg.Width)
 		m.propagateSize()
+		return m, nil
+
+	case tea.BackgroundColorMsg:
+		m.setStyles(DefaultStyles(msg.IsDark()))
 		return m, nil
 
 	case statusMsg:
@@ -189,7 +210,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = Screen(msg)
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// A screen that is capturing text input (the filter box, a
 		// confirmation prompt) gets first refusal on every key, or typing "q"
 		// into a search would quit the program.
@@ -333,7 +354,18 @@ func (m *Model) propagateSize() {
 }
 
 // View renders the frame.
-func (m Model) View() string {
+//
+// The alternate screen and mouse reporting were program options in Bubble Tea
+// v1; in v2 every frame declares them.
+func (m Model) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// render draws the frame's content.
+func (m Model) render() string {
 	if !m.ready {
 		return "loading…"
 	}

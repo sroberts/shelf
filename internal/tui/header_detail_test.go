@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/sroberts/shelf/internal/library"
 )
@@ -36,7 +36,7 @@ func frameAt(t *testing.T, w, h int, books []*library.Book, msgs ...tea.Msg) str
 		model, cmd = model.Update(msg)
 		model = runCmd(t, model, cmd)
 	}
-	return stripANSI(model.View())
+	return stripANSI(model.View().Content)
 }
 
 // The header is the answer to "how big is this library", and it has to be right
@@ -98,7 +98,7 @@ func TestDetailPanelShowsTheSelectedBook(t *testing.T) {
 
 func TestDetailPanelFollowsTheCursor(t *testing.T) {
 	books := goldenBooks()
-	down := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	down := tea.KeyPressMsg{Code: 'j', Text: "j"}
 
 	first := frameAt(t, 120, 30, books)
 	if !strings.Contains(first, "/lib/earthsea.epub") {
@@ -144,7 +144,7 @@ func TestDetailPanelIsDroppedOnANarrowTerminal(t *testing.T) {
 }
 
 func TestDetailPanelTogglesWithI(t *testing.T) {
-	toggle := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}}
+	toggle := tea.KeyPressMsg{Code: 'i', Text: "i"}
 
 	hidden := frameAt(t, 120, 24, []*library.Book{richBook()}, toggle)
 	if strings.Contains(hidden, "Parnassus Press") {
@@ -164,7 +164,7 @@ func TestHidingThePanelWidensTheTable(t *testing.T) {
 		SHA256: "L", Path: "/lib/long.epub", Format: library.FormatEPUB,
 		Title: "The Exceedingly Long Title That Will Certainly Need Truncating Somewhere",
 	}
-	toggle := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}}
+	toggle := tea.KeyPressMsg{Code: 'i', Text: "i"}
 
 	withPanel := visibleTitle(t, frameAt(t, 120, 24, []*library.Book{long}))
 	without := visibleTitle(t, frameAt(t, 120, 24, []*library.Book{long}, toggle))

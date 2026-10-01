@@ -1,12 +1,24 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 // Styles holds every lipgloss style the TUI uses.
 //
-// Colors are given as adaptive pairs so the same build reads correctly on a
-// light and a dark terminal; lipgloss picks per background at runtime.
+// Colors are given as light/dark pairs so the same build reads correctly on
+// either kind of terminal. Which half applies is decided by DefaultStyles from
+// the background the terminal reports once the program is running. Lip Gloss
+// v1 asked at package init instead, which made every CLI command, `shelf
+// version` included, query the terminal and wait up to five seconds for a
+// reply that some terminals never send.
 type Styles struct {
+	// Dark records which background these styles were built for, so the
+	// Bubbles components can be given their matching defaults.
+	Dark bool
+
 	App       lipgloss.Style
 	Title     lipgloss.Style
 	TabActive lipgloss.Style
@@ -55,21 +67,27 @@ const (
 	GlyphUnknown = "·" // no device selected, or status not yet known
 )
 
-// DefaultStyles builds the standard theme.
-func DefaultStyles() Styles {
+// DefaultStyles builds the standard theme for a dark or light background.
+func DefaultStyles(dark bool) Styles {
+	pick := lipgloss.LightDark(dark)
+	pair := func(light, dark string) color.Color {
+		return pick(lipgloss.Color(light), lipgloss.Color(dark))
+	}
 	var (
-		accent    = lipgloss.AdaptiveColor{Light: "#7D56F4", Dark: "#B39DFF"}
-		subtle    = lipgloss.AdaptiveColor{Light: "#6C6C6C", Dark: "#8A8A8A"}
-		success   = lipgloss.AdaptiveColor{Light: "#1F7A3D", Dark: "#5BD97E"}
-		warning   = lipgloss.AdaptiveColor{Light: "#8A6100", Dark: "#F2C14E"}
-		errorCol  = lipgloss.AdaptiveColor{Light: "#B3261E", Dark: "#FF7B72"}
-		selBg     = lipgloss.AdaptiveColor{Light: "#E6E0FF", Dark: "#2E2A45"}
-		cursorBg  = lipgloss.AdaptiveColor{Light: "#D4C9FF", Dark: "#4A3F7A"}
-		headerCol = lipgloss.AdaptiveColor{Light: "#2B2B2B", Dark: "#E4E4E4"}
-		border    = lipgloss.AdaptiveColor{Light: "#C9C9C9", Dark: "#4A4A4A"}
+		accent    = pair("#7D56F4", "#B39DFF")
+		subtle    = pair("#6C6C6C", "#8A8A8A")
+		success   = pair("#1F7A3D", "#5BD97E")
+		warning   = pair("#8A6100", "#F2C14E")
+		errorCol  = pair("#B3261E", "#FF7B72")
+		selBg     = pair("#E6E0FF", "#2E2A45")
+		cursorBg  = pair("#D4C9FF", "#4A3F7A")
+		headerCol = pair("#2B2B2B", "#E4E4E4")
+		border    = pair("#C9C9C9", "#4A4A4A")
 	)
 
 	return Styles{
+		Dark: dark,
+
 		App:   lipgloss.NewStyle().Padding(0, 1),
 		Title: lipgloss.NewStyle().Bold(true).Foreground(accent),
 

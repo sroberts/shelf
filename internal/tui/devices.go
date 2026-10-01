@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/device"
@@ -156,6 +156,8 @@ func (m devicesModel) discover(ctx context.Context) tea.Cmd {
 
 func (m *devicesModel) setSize(w, h int) { m.width, m.height = w, h }
 
+func (m *devicesModel) setStyles(styles Styles) { m.styles = styles }
+
 func (m devicesModel) Update(ctx context.Context, msg tea.Msg) (devicesModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -172,7 +174,7 @@ func (m devicesModel) Update(ctx context.Context, msg tea.Msg) (devicesModel, te
 		m.mergeDiscovered(msg.found)
 		return m, setStatus("discovery found %d device(s)", len(msg.found))
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.keys.Up):
 			m.cursor = clamp(m.cursor-1, 0, max(0, len(m.entries)-1))

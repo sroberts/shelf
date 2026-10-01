@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/sroberts/shelf/internal/kosync"
 	"github.com/sroberts/shelf/internal/library"
@@ -59,13 +59,10 @@ func newLibraryModel(app *App, keys KeyMap, styles Styles) libraryModel {
 	ti.Prompt = "/"
 	ti.Placeholder = "title, author:…, tag:…, and/or/not"
 	ti.CharLimit = 200
-	ti.PromptStyle = styles.Accent
-	ti.TextStyle = styles.StatValue
 
-	return libraryModel{
+	m := libraryModel{
 		app:       app,
 		keys:      keys,
-		styles:    styles,
 		selected:  map[string]bool{},
 		syncState: map[string]string{},
 		readPct:   map[string]float64{},
@@ -73,6 +70,23 @@ func newLibraryModel(app *App, keys KeyMap, styles Styles) libraryModel {
 		detail:    newDetailModel(styles, GraphicsNone),
 		loading:   true,
 	}
+	m.setStyles(styles)
+	return m
+}
+
+// setStyles applies a theme to the screen and everything it owns. It is called
+// again once the terminal reports its background, so it must restyle the
+// filter box and the detail panel rather than only recording the value.
+func (m *libraryModel) setStyles(styles Styles) {
+	m.styles = styles
+	m.detail.setStyles(styles)
+
+	ts := textinput.DefaultStyles(styles.Dark)
+	for _, state := range []*textinput.StyleState{&ts.Focused, &ts.Blurred} {
+		state.Prompt = styles.Accent
+		state.Text = styles.StatValue
+	}
+	m.filter.SetStyles(ts)
 }
 
 // Messages produced by this screen.
@@ -180,7 +194,7 @@ func (m libraryModel) capturing() bool { return m.filtering }
 // would silently keep whatever size it started with (zero).
 func (m *libraryModel) setSize(w, h int) {
 	m.width, m.height = w, h
-	m.filter.Width = max(10, w-4)
+	m.filter.SetWidth(max(10, w-4))
 
 	dw := 0
 	if m.detail.visible {
@@ -218,7 +232,7 @@ func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, te
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.filter.Width = msg.Width - 4
+		m.filter.SetWidth(msg.Width - 4)
 		return m, nil
 
 	case booksLoadedMsg:
@@ -240,7 +254,7 @@ func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, te
 		m.syncCursor()
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.filtering {
 			return m.updateFilter(ctx, msg)
 		}
@@ -249,7 +263,7 @@ func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, te
 	return m, nil
 }
 
-func (m libraryModel) updateFilter(ctx context.Context, msg tea.KeyMsg) (libraryModel, tea.Cmd) {
+func (m libraryModel) updateFilter(ctx context.Context, msg tea.KeyPressMsg) (libraryModel, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		m.filtering = false
@@ -271,7 +285,7 @@ func (m libraryModel) updateFilter(ctx context.Context, msg tea.KeyMsg) (library
 	return m, cmd
 }
 
-func (m libraryModel) updateNormal(ctx context.Context, msg tea.KeyMsg) (libraryModel, tea.Cmd) {
+func (m libraryModel) updateNormal(ctx context.Context, msg tea.KeyPressMsg) (libraryModel, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Detail):
 		m.detail.visible = !m.detail.visible

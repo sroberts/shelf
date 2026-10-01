@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/sroberts/shelf/internal/library"
 )
@@ -150,7 +150,7 @@ func captureFrameWith(t *testing.T, app *App, msgs []tea.Msg) string {
 		model, cmd = model.Update(msg)
 		model = runCmd(t, model, cmd)
 	}
-	return model.View()
+	return model.View().Content
 }
 
 // runCmd executes a command and feeds the resulting messages back in, so the
@@ -196,27 +196,27 @@ func TestGoldenLibraryFrame(t *testing.T) {
 func TestGoldenLibraryWithSelection(t *testing.T) {
 	frame := captureFrame(t,
 		[]tea.Msg{
-			tea.KeyMsg{Type: tea.KeySpace}, // select row 1, cursor advances
-			tea.KeyMsg{Type: tea.KeySpace}, // select row 2
+			tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}, // select row 1, cursor advances
+			tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}, // select row 2
 		})
 	assertGolden(t, "library_selection", frame)
 }
 
 func TestGoldenDevicesEmpty(t *testing.T) {
 	frame := captureFrame(t,
-		[]tea.Msg{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")}})
+		[]tea.Msg{tea.KeyPressMsg{Code: '2', Text: "2"}})
 	assertGolden(t, "devices_empty", frame)
 }
 
 func TestGoldenSyncIdle(t *testing.T) {
 	frame := captureFrame(t,
-		[]tea.Msg{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")}})
+		[]tea.Msg{tea.KeyPressMsg{Code: '3', Text: "3"}})
 	assertGolden(t, "sync_idle", frame)
 }
 
 func TestGoldenHelpExpanded(t *testing.T) {
 	frame := captureFrame(t,
-		[]tea.Msg{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")}})
+		[]tea.Msg{tea.KeyPressMsg{Code: '?', Text: "?"}})
 	assertGolden(t, "help_expanded", frame)
 }
 

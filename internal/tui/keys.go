@@ -1,6 +1,6 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/key"
+import "charm.land/bubbles/v2/key"
 
 // KeyMap is the global keymap. Vim-first, discoverable through bubbles/help.
 //
@@ -96,7 +96,8 @@ func DefaultKeyMap() KeyMap {
 		),
 
 		Select: key.NewBinding(
-			key.WithKeys(" "),
+			// Bubble Tea v2 names the space bar "space" rather than " ".
+			key.WithKeys("space"),
 			key.WithHelp("space", "toggle selection"),
 		),
 		VisualSel: key.NewBinding(

@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `PruneEmptyDirs` helper in `internal/library` to clean up empty parent directories up to the library root upon book deletion.
 - Books can be referred to by index id as `id:42` in `shelf rm`, `shelf delete`, `shelf meta`, `shelf shelf add` and `shelf shelf remove`. `shelf meta` shows the id, and JSON output from `shelf ls`, `shelf meta` and `shelf shelf show` includes it as `id`.
 
+### Changed
+- The TUI is built on Bubble Tea v2, Lip Gloss v2 and Bubbles v2. Bubble Tea v1 queried the terminal's background colour at package init, so every CLI command, `shelf version` included, sent an escape sequence to the terminal and waited up to five seconds for a reply some terminals never send. The query now runs only when the TUI starts.
+
 ## [0.1.0] - 2026-09-14
 
 ### Added

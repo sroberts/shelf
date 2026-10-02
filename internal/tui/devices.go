@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sroberts/shelf/internal/config"
@@ -28,6 +29,11 @@ type devicesModel struct {
 	probing       bool
 	discovering   bool
 	width, height int
+
+	// form is the add-device form while it is open. Nil the rest of the time,
+	// which is also what tells the root model to stop treating keys as global
+	// commands: typing a nickname with a "q" in it must not quit.
+	form *deviceForm
 }
 
 // deviceEntry is one row: a configured device, or one found by discovery.
@@ -59,7 +65,27 @@ func newDevicesModel(app *App, keys KeyMap, styles Styles) devicesModel {
 type (
 	devicesProbedMsg struct{ entries []deviceEntry }
 	discoveredMsg    struct{ found []device.Discovered }
+
+	// deviceSavedMsg carries the device list as config.toml now loads, or the
+	// reason the device was not saved.
+	deviceSavedMsg struct {
+		nickname string
+		file     string
+		devices  []config.Device
+		err      error
+	}
 )
+
+// saveDevice appends the device to config.toml off the UI thread.
+func saveDevice(file string, paths config.Paths, d config.Device) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := config.AppendDevice(file, paths, d)
+		if err != nil {
+			return deviceSavedMsg{nickname: d.Nickname, err: err}
+		}
+		return deviceSavedMsg{nickname: d.Nickname, file: file, devices: cfg.Devices}
+	}
+}
 
 // probe polls every configured device concurrently.
 //
@@ -156,7 +182,14 @@ func (m devicesModel) discover(ctx context.Context) tea.Cmd {
 
 func (m *devicesModel) setSize(w, h int) { m.width, m.height = w, h }
 
-func (m *devicesModel) setStyles(styles Styles) { m.styles = styles }
+func (m *devicesModel) setStyles(styles Styles) {
+	m.styles = styles
+	if m.form != nil {
+		m.form.setStyles(styles)
+	}
+}
+
+func (m devicesModel) capturing() bool { return m.form != nil }
 
 func (m devicesModel) Update(ctx context.Context, msg tea.Msg) (devicesModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -174,7 +207,31 @@ func (m devicesModel) Update(ctx context.Context, msg tea.Msg) (devicesModel, te
 		m.mergeDiscovered(msg.found)
 		return m, setStatus("discovery found %d device(s)", len(msg.found))
 
+	case deviceSavedMsg:
+		if msg.err != nil {
+			if m.form != nil {
+				m.form.saving = false
+				m.form.err = msg.err.Error()
+			}
+			return m, nil
+		}
+		m.form = nil
+		// Swap in a copy rather than editing the shared config in place: a
+		// command already running holds the old pointer and must keep seeing
+		// a consistent value. Only the device list is taken from the reload,
+		// so a --library override on this run is not lost.
+		next := *m.app.Config
+		next.Devices = msg.devices
+		m.app.Config = &next
+		m.probing = true
+		m.cursor = max(0, len(msg.devices)-1)
+		return m, tea.Batch(m.probe(ctx),
+			setStatus("added %q to %s", msg.nickname, msg.file))
+
 	case tea.KeyPressMsg:
+		if m.form != nil {
+			return m.updateForm(msg)
+		}
 		switch {
 		case key.Matches(msg, m.keys.Up):
 			m.cursor = clamp(m.cursor-1, 0, max(0, len(m.entries)-1))
@@ -188,9 +245,57 @@ func (m devicesModel) Update(ctx context.Context, msg tea.Msg) (devicesModel, te
 				m.probe(ctx), m.discover(ctx),
 				setStatus("probing devices and broadcasting discovery…"),
 			)
+
+		case key.Matches(msg, m.keys.AddDevice):
+			var from *deviceEntry
+			if m.cursor < len(m.entries) && m.entries[m.cursor].Discovered {
+				e := m.entries[m.cursor]
+				from = &e
+			}
+			m.form = newDeviceForm(m.styles, from)
+			return m, textinput.Blink
+		}
+
+	default:
+		// Cursor blinks and other input-internal messages.
+		if m.form != nil {
+			var cmd tea.Cmd
+			m.form.inputs[m.form.focus], cmd = m.form.inputs[m.form.focus].Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
+}
+
+// updateForm handles keys while the add-device form is open. Nothing here does
+// I/O: saving returns a command, per the rule that Update never blocks.
+func (m devicesModel) updateForm(msg tea.KeyPressMsg) (devicesModel, tea.Cmd) {
+	f := m.form
+	if f.saving {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.form = nil
+		return m, setStatus("add device cancelled")
+	case "tab", "down":
+		return m, f.move(1)
+	case "shift+tab", "up":
+		return m, f.move(-1)
+	case "enter":
+		d, err := f.device(m.app.Config.Devices)
+		if err != nil {
+			f.err = err.Error()
+			return m, nil
+		}
+		f.err = ""
+		f.saving = true
+		return m, saveDevice(m.app.Config.File, m.app.Config.Paths, d)
+	}
+	var cmd tea.Cmd
+	f.inputs[f.focus], cmd = f.inputs[f.focus].Update(msg)
+	f.err = ""
+	return m, cmd
 }
 
 // mergeDiscovered adds devices found on the network that are not configured,
@@ -227,14 +332,19 @@ func (m devicesModel) hint() string {
 	switch {
 	case m.probing || m.discovering:
 		return "probing…"
+	case m.form != nil:
+		return "tab to move between fields, enter to save, esc to cancel"
 	case len(m.entries) == 0:
-		return "no devices configured — add a [[device]] block to config.toml, or press r to discover"
+		return "no devices configured — press n to add one, or r to discover"
 	default:
-		return "r to refresh and discover"
+		return "n to add a device, r to refresh and discover"
 	}
 }
 
 func (m devicesModel) View() string {
+	if m.form != nil {
+		return m.form.View(m.styles)
+	}
 	if m.probing && len(m.entries) == 0 {
 		return m.styles.Subtle.Render("probing devices…")
 	}

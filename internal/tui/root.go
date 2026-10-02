@@ -299,6 +299,8 @@ func (m Model) captureKeys() bool {
 	switch m.screen {
 	case ScreenLibrary:
 		return m.library.capturing()
+	case ScreenDevices:
+		return m.devices.capturing()
 	case ScreenSync:
 		return m.sync.capturing()
 	}

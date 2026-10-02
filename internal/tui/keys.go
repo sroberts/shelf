@@ -38,8 +38,10 @@ type KeyMap struct {
 	Sync    key.Binding
 	SyncAll key.Binding
 	Refresh key.Binding
-	Confirm key.Binding
-	Cancel  key.Binding
+	// AddDevice opens the add-device form on the Devices screen.
+	AddDevice key.Binding
+	Confirm   key.Binding
+	Cancel    key.Binding
 
 	// Meta
 	Help key.Binding
@@ -142,6 +144,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("r"),
 			key.WithHelp("r", "refresh"),
 		),
+		AddDevice: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "add device"),
+		),
 		Confirm: key.NewBinding(
 			key.WithKeys("enter", "y"),
 			key.WithHelp("enter", "confirm"),
@@ -173,7 +179,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Top, k.Bottom, k.PageUp, k.PageDown},
 		{k.NextScreen, k.PrevScreen, k.Library, k.Devices, k.SyncScreen},
 		{k.Select, k.VisualSel, k.SelectAll, k.ClearSel, k.Filter},
-		{k.Detail, k.DetailUp, k.DetailDown, k.Refresh},
+		{k.Detail, k.DetailUp, k.DetailDown, k.Refresh, k.AddDevice},
 		{k.Sync, k.SyncAll, k.Confirm, k.Cancel, k.Help, k.Quit},
 	}
 }

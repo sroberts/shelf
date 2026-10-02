@@ -2,6 +2,6 @@ shelf    1 Library    2 Devices    3 Sync                                       
   4 books · 4 authors · 1 series · 24.8 MB
  ──────────────────────────────────────────────────────────────────────────────────────────────────
  No devices configured or discovered.
- no devices configured — add a [[device]] block to config.toml, or press r to discover
+ no devices configured — press n to add one, or r to discover
 
  k/↑ up • j/↓ down • / filter • space toggle selection • i toggle details • s sync selection • ? help • q quit

@@ -113,9 +113,11 @@ func (m *syncModel) setSize(w, h int) {
 // All of it off the UI thread.
 func (m syncModel) buildPlan(ctx context.Context, books []*library.Book) tea.Cmd {
 	app := m.app
+	// Read before the goroutine starts: adding a device swaps app.Config for
+	// a new value, and a read from inside the command would race with that.
+	cfg := app.Config
 
 	return func() tea.Msg {
-		cfg := app.Config
 
 		dev, err := cfg.DeviceByName("")
 		if err != nil {

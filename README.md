@@ -67,6 +67,8 @@ shelf devices --discover
 shelf sync
 ```
 
+To save a device, add a `[[device]]` block to `~/.config/shelf/config.toml`, or press `n` on the TUI's Devices screen (`2`) to add one there. With a discovered device under the cursor, the form is filled in for you.
+
 Use `shelf sync --dry-run` to preview planned transfers and disk usage before uploading.
 
 ### Direct via microSD Card

@@ -50,6 +50,11 @@ type Config struct {
 
 	// Paths is resolved at load time, not read from the file.
 	Paths Paths `toml:"-"`
+
+	// File is the config file this was loaded from, whether or not it exists.
+	// Recorded so a frontend that adds a device writes back to the file the
+	// user pointed --config at, not to the default location.
+	File string `toml:"-"`
 }
 
 // UI holds presentation preferences. Unused until the TUI lands in M3, but
@@ -162,6 +167,7 @@ func Load() (Config, error) {
 func LoadFile(file string, paths Paths) (Config, error) {
 	cfg := Default()
 	cfg.Paths = paths
+	cfg.File = file
 
 	data, err := os.ReadFile(file)
 	switch {

@@ -18,5 +18,5 @@ shelf    1 Library    2 Devices    3 Sync                                       
  j/↓    down         ⇧tab prev screen    v     visual select       ⇧↑ scroll details
  g      top          1    library        a     select all          ⇧↓ scroll details
  G      bottom       2    devices        A     clear selection     r  refresh
- ctrl+u page up      3    sync           /     filter
+ ctrl+u page up      3    sync           /     filter              n  add device
  ctrl+d page down

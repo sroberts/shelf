@@ -58,6 +58,15 @@ back the other way; the device is a dumb, path-stable target.
   client gets for free is enforced here: protected paths, write-then-rename, ENOSPC mapped to
   `device.ErrDiskFull` so the executor still aborts, and NFC on the walk so a Mac does not see
   every accented book as new.
+- `internal/outpost` — what `shelf serve` needs to run under Outpost: its environment, verifying
+  the gateway's signed identity token, and the cross-origin write guard. The contract is
+  `outpost-service-spec.md` v0.9.4 in the outpost repo; read it before changing `cmd_serve.go`.
+- `internal/api` — the REST API under `/v1`, its OpenAPI document, and the MCP server at `/mcp`,
+  both thin layers over one `Service`. `TestOpenAPIMatchesRoutes` fails if `openapi.json` and the
+  route table disagree. Add a route to both, or the test tells you which one you forgot.
+- `internal/ai` — the operator's AI models through Outpost (spec §15): a client, the genre
+  classifier, and `ai.db`.
+- `internal/mailbox` — mail through Outpost (spec §16): newsletters become EPUBs in the library.
 - `internal/target` — resolves a `config.Device` to whichever transport it names, plus the label
   used in messages. Both the CLI and the TUI go through it; neither builds a client directly.
 - `internal/tui` — Bubble Tea frontend over the same internal API the CLI uses. `header.go` is the
@@ -240,6 +249,44 @@ expressed in query syntax at all.
 An OPDS download is **outside path pinning**. The firmware chooses the filename and folder, so the
 file is not at the manifest's path and `--prune` sees it as an orphan. Nothing in shelf reconciles
 the two routes today.
+
+### Running under Outpost
+
+`OUTPOST_STORAGE_DIR` set means supervised. `config.DefaultPaths` then roots every directory, and
+the default library, inside it, ahead of `XDG_*`, because that directory is the only thing backup
+and restore cover and `progress.db` cannot be rebuilt. `shelf serve` binds `127.0.0.1` from
+`--port`/`OUTPOST_PORT` and refuses to start without one rather than reaching for the config's
+`:8080`, which binds every interface. It logs JSON with no timestamp (Outpost stamps lines) and
+keeps its shutdown at 8s, inside the 10s before SIGKILL.
+
+- **`/up` touches nothing.** No database, no lock, no auth. It runs every 3s forever, and three
+  failures restart the process, which would fix nothing a broken index caused.
+- **Only the signed `X-Outpost-Identity` is trusted, never `X-Outpost-User`.** Any process on the
+  machine can reach the loopback port and set the plain header. The catalog serves the whole
+  library, which is exactly what a neighbour must not get by claiming a name.
+- **The reader never passes the gateway.** It has no browser. Its paths are `public_paths` in
+  `outpost.toml`, where the gateway strips all identity, so kosync and OPDS keep their own auth
+  under Outpost. `Identify` only ever adds a way in. It never replaces Basic.
+- **Stores open before the port binds.** They open and migrate first, so a refused connection
+  during startup grace is the only "not ready" signal needed. `--scan` runs after binding, in the
+  background, because the index is a cache and serving it partly filled is correct.
+
+### AI and mail are enhancements, never dependencies
+
+`ai.db` is **not** disposable, unlike `index.db`, and lives beside `progress.db` for the same reason:
+every answer in it cost the operator a model call, and rebuilding the index must not mean paying
+again. Answers are keyed by book SHA-256, so they survive a rebuild. No AI or mail failure may fail
+the healthcheck or exit the process. A restart fixes neither, and the spec is explicit that it
+costs in-memory state for nothing.
+
+Mail dedupes on the EPUB's `urn:shelf:mail:<message-id>` identifier, not its hash. The description
+is model output, so the same message rebuilt produces different bytes. Per message the order is
+import, then save the cursor, then delete, so a crash can only ever re-deliver, never lose.
+
+The MCP server is hand-written JSON-RPC, deliberately, rather than an SDK dependency. It is
+stateless and answers every POST with `application/json`. GET is 405 because it offers no event
+stream. It issues no `Mcp-Session-Id`, which is also what keeps it working through Outpost's portal
+route, where `Set-Cookie` is dropped.
 
 ## Not built yet
 

@@ -99,7 +99,46 @@ shelf serve
 
 - **Reading Progress:** In CrossPoint's sync settings, configure KOReader sync with the server address (`http://<this-machine>:8080`) and your user credentials. Set `[kosync] user` in your config to see reading progress in `shelf ls`.
 - **OPDS Catalog:** Add `http://<this-machine>:8080/opds` in CrossPoint's OPDS browser settings. *(Note: CrossPoint's OPDS client only downloads EPUB files; other formats are filtered out by the device).*
-- Additional server flags: `--open-catalog` disables OPDS password authentication, and `--no-opds` disables the catalog endpoint.
+- Additional server flags: `--open-catalog` disables OPDS password authentication, `--no-opds` disables the catalog endpoint, `--scan` re-indexes the library in the background at startup, and `--port N` listens on `127.0.0.1:N` only (for running behind a proxy; use `--listen` for the LAN).
+- `GET /up` is an unauthenticated healthcheck that answers `200 ok` while the server is running.
+
+### API and MCP
+
+The same server offers a JSON REST API under `/v1` and an MCP server at `/mcp`. Both take the same account as the catalog: HTTP Basic with a shelf account, or a signed-in Outpost user (see below). They're authenticated even with `--open-catalog`, because they can edit shelves.
+
+- **REST:** search books (`GET /v1/books?q=author:"le guin"`), fetch or download one (`/v1/books/{id}`, `/v1/books/{id}/file`), browse authors, series, tags and genres, list shelves and add or remove books on manual ones, library stats, and reading progress (`/v1/progress`). The full description is at `GET /v1/openapi.json`, which needs no login.
+- **MCP:** the Streamable HTTP transport at `/mcp`, with tools `search_books`, `get_book`, `list_values`, `list_shelves`, `get_shelf`, `add_to_shelf`, `remove_from_shelf`, `library_stats` and `reading_progress`.
+
+Shelf edits made through either one are written to `shelves.toml`. If that write fails, the edit is undone.
+
+### Running under Outpost
+
+shelf follows the [Outpost service spec](https://github.com/sroberts/outpost/blob/v0.9.4/outpost-service-spec.md) (revision v0.9.4), and ships an `outpost.toml`, so it can be installed with:
+
+```sh
+outpost add https://github.com/sroberts/shelf
+```
+
+When `OUTPOST_STORAGE_DIR` is set, `shelf serve`:
+
+- listens on `127.0.0.1:$OUTPOST_PORT` (or `--port`), and refuses to start without a port rather than falling back to binding every interface;
+- keeps all of its state, including the config file, index, `shelves.toml`, `progress.db`, and the default library (`$OUTPOST_STORAGE_DIR/library`), inside the storage directory, so `outpost backup` and `outpost restore` cover everything. `--library` or `library_root` in `$OUTPOST_STORAGE_DIR/config/config.toml` can point it elsewhere, but a library outside storage is not backed up;
+- logs one JSON object per line to stdout, with `level` and `msg`, and reports a fatal error as a JSON line on stderr before exiting non-zero;
+- exits within ten seconds of SIGTERM.
+
+If Outpost gives shelf its models and mail, `shelf serve` also uses them. Both are optional: without them, or with `--no-ai` / `--no-mail`, it serves exactly as before.
+
+- **AI models (`OUTPOST_AI_URL`):** each book is classified into a genre once, by the System 1 model, in the background. Genres show up in the API and MCP, and you can filter by them. Answers are kept in `data/ai.db` inside storage and are never requested twice, not even after the index is rebuilt. When the LLM is available it also writes a short description for each newsletter imported from mail. If a model is unavailable or not assigned to shelf, shelf carries on without it.
+- **Mail (`OUTPOST_MAIL_URL`):** mail sent to shelf's addresses (for example `you+shelf@gmail.com`, or an alias you make for one newsletter) becomes an EPUB in the library under `Mail/<sender>/`, titled with the date and subject, and is then deleted from Outpost's mailbox. That way newsletters reach the reader through the catalog or `shelf sync`. Outpost keeps no attachments, so only the text comes through. A message delivered twice is imported once.
+
+To manage accounts or import books, run the CLI against the same storage directory:
+
+```sh
+OUTPOST_STORAGE_DIR=~/.outpost/data/shelf shelf user add reader
+OUTPOST_STORAGE_DIR=~/.outpost/data/shelf shelf import ~/Downloads/*.epub
+```
+
+**With the login gateway on** (`OUTPOST_AUTH=gateway`), a browser that has signed in to Outpost can open the catalog without a second password. shelf verifies the signed `X-Outpost-Identity` token against `OUTPOST_JWKS_URL`, and never trusts the plain `X-Outpost-User` header. The reader can't sign in to the gateway, so `outpost.toml` suggests the paths it uses (`/opds`, `/opds/*`, `/users/auth`, `/syncs/progress`, `/syncs/progress/*`) as `public_paths`. shelf authenticates each of those requests itself with your shelf account. Account creation (`/users/create`) is left behind the gateway, so create accounts with `shelf user add`. The reader also needs a network route to shelf's tailnet address, which an ESP32 can't join by itself. Getting it there, for example with a subnet router or Funnel, is up to you as the operator.
 
 ## Commands
 
@@ -115,7 +154,7 @@ shelf optimize FILE... --profile NAME   Rebuild an EPUB for a device panel
 shelf shelf create|ls|rm|show|add       Manage named shelves
 shelf devices [--discover]              Find and inspect devices
 shelf user add|ls|rm|passwd NAME        Manage sync and catalog accounts
-shelf serve [--no-opds] [--open-catalog] Run progress sync and OPDS catalog
+shelf serve [--port N] [--scan]         Run progress sync, OPDS catalog, API and MCP
 shelf sync [SHELF] [--dry-run]          Send a shelf to a device
 shelf push FILE... --to /Books          Upload directly to a device path
 shelf pull PATH... [--out DIR]          Download files from a device

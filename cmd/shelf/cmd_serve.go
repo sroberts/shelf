@@ -4,25 +4,36 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/sroberts/shelf/internal/ai"
+	"github.com/sroberts/shelf/internal/api"
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/kosync"
+	"github.com/sroberts/shelf/internal/library"
+	"github.com/sroberts/shelf/internal/mailbox"
 	"github.com/sroberts/shelf/internal/opds"
+	"github.com/sroberts/shelf/internal/outpost"
 )
 
 var cmdServe = &command{
 	name:    "serve",
 	summary: "run the sync and OPDS catalog server",
-	usage:   "serve [--listen ADDR] [--no-registration] [--no-opds] [--open-catalog] [--verbose]",
+	usage:   "serve [--listen ADDR | --port N] [--scan] [--no-registration] [--no-opds] [--open-catalog] [--no-ai] [--no-mail] [--verbose]",
 	run: func(ctx context.Context, a *app, args []string) error {
 		fs := newFlagSet("serve")
 		addr := fs.String("listen", "", "address to listen on (default: from config)")
+		port := fs.Int("port", 0,
+			"listen on 127.0.0.1:N, for running behind a proxy such as Outpost (default: $OUTPOST_PORT)")
 		// Kept because it is what the flag was called before OPDS shared the
 		// listener, and a flag that silently stops working is worse than one
 		// that outlives its name.
@@ -32,10 +43,19 @@ var cmdServe = &command{
 		noOPDS := fs.Bool("no-opds", false, "do not serve the OPDS catalog")
 		openCatalog := fs.Bool("open-catalog", false,
 			"serve the OPDS catalog without a password")
+		scan := fs.Bool("scan", false,
+			"index the library in the background at startup, so the catalog is current")
+		noAI := fs.Bool("no-ai", false,
+			"do not use Outpost's AI models, even when OUTPOST_AI_URL is set")
+		noMail := fs.Bool("no-mail", false,
+			"do not import mail, even when OUTPOST_MAIL_URL is set")
 		verbose := fs.Bool("verbose", false, "log every request")
 		if err := parseFlags(fs, args); err != nil {
 			return err
 		}
+
+		env := outpost.FromEnv()
+		logger := serveLogger(env, *verbose)
 
 		cfg, err := a.config()
 		if err != nil {
@@ -45,44 +65,69 @@ var cmdServe = &command{
 			return err
 		}
 
-		if *addr == "" {
-			*addr = *legacyAddr
-		}
-		if *addr == "" {
-			*addr = cfg.Kosync.Listen
-		}
-		if *addr == "" {
-			*addr = ":8080"
+		listen, err := listenAddr(*addr, *legacyAddr, *port, env, cfg.Kosync.Listen)
+		if err != nil {
+			return err
 		}
 
+		// Opened, and migrated, before the port is bound. Outpost counts a
+		// refused connection as a failed healthcheck only after the startup
+		// grace, so binding last is what keeps /up from ever answering 200
+		// for a server that cannot yet serve (spec §2, §14 "Updates").
 		store, err := kosync.OpenStore(cfg.Paths.ProgressFile())
 		if err != nil {
 			return err
 		}
 		defer store.Close()
 
-		level := slog.LevelInfo
-		if *verbose {
-			level = slog.LevelDebug
-		}
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-
 		srv := kosync.NewServer(store, logger)
 		srv.AllowRegistration = !*noRegistration
 
-		// Both services share one listener so the reader needs a single
-		// address for progress sync and for browsing. The mux below routes
-		// /opds to the catalog and everything else to kosync, which owns the
-		// root help page.
-		handler := srv.Handler()
-		var catalogPath string
+		// Every route shares one listener so the reader needs a single
+		// address for progress sync and for browsing. /opds goes to the
+		// catalog and everything else to kosync, which owns the root help
+		// page.
+		root := http.NewServeMux()
 
-		if !*noOPDS && !cfg.OPDS.Disabled {
-			db, err := a.index()
-			if err != nil {
-				return err
+		// The healthcheck means "this process is serving", nothing more: no
+		// database query, no lock, no auth (spec §2). A broken library index
+		// is not something a restart would fix.
+		root.HandleFunc("GET /up", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			io.WriteString(w, "ok\n")
+		})
+		// Outpost's gateway owns /.outpost/ and never forwards it. Answering
+		// it explicitly keeps kosync's catch-all from serving its help page
+		// there to anything that reaches the port directly.
+		root.Handle("/.outpost/", http.NotFoundHandler())
+
+		// The index backs the catalog, the API and MCP alike, so it is open
+		// even with the catalog off.
+		db, err := a.index()
+		if err != nil {
+			return err
+		}
+
+		// Who a request is, for the catalog, the API and MCP. Under the
+		// gateway a verified identity token; otherwise, or for a client
+		// that cannot sign in there (the reader), a shelf account over
+		// HTTP Basic. One account works everywhere.
+		identify := gatewayIdentity(env, logger)
+		authenticate := func(r *http.Request) (string, bool) {
+			if identify != nil {
+				if user, ok := identify(r); ok {
+					return user, true
+				}
 			}
+			user, password, ok := r.BasicAuth()
+			if ok && store.CheckPassword(user, password) == nil {
+				return user, true
+			}
+			return "", false
+		}
 
+		var catalogPath string
+		if !*noOPDS && !cfg.OPDS.Disabled {
 			catalog := opds.NewCatalog(db, catalogTitle(cfg))
 			if cfg.OPDS.PageSize > 0 {
 				catalog.PageSize = cfg.OPDS.PageSize
@@ -91,13 +136,11 @@ var cmdServe = &command{
 			catalogSrv := opds.NewServer(catalog, logger)
 			if !*openCatalog && !cfg.OPDS.Anonymous {
 				catalogSrv.Auth = store
+				catalogSrv.Identify = identify
 			}
 
-			root := http.NewServeMux()
 			root.Handle("/opds", catalogSrv.Handler())
 			root.Handle("/opds/", catalogSrv.Handler())
-			root.Handle("/", handler)
-			handler = root
 			catalogPath = "/opds"
 		} else {
 			// Say the catalog is off rather than letting kosync's catch-all
@@ -105,16 +148,72 @@ var cmdServe = &command{
 			// client that asks for a feed and gets prose reports a parse
 			// error, which points at the feed rather than at the switch that
 			// turned it off.
-			root := http.NewServeMux()
 			root.HandleFunc("/opds", catalogDisabled)
 			root.HandleFunc("/opds/", catalogDisabled)
-			root.Handle("/", handler)
-			handler = root
 		}
 
+		// AI models (spec §15), when Outpost hands shelf any. Optional in
+		// every sense: unset variables, --no-ai, or a store that will not
+		// open all leave shelf serving exactly as it would without them.
+		var (
+			aiClient   *ai.Client
+			aiStore    *ai.Store
+			classifier *ai.Classifier
+		)
+		if !*noAI {
+			aiClient = ai.FromEnv()
+		}
+		if aiClient != nil {
+			if aiStore, err = ai.OpenStore(cfg.Paths.AIFile()); err != nil {
+				logger.Error("AI store unavailable; genres are off", "path", cfg.Paths.AIFile(), "err", err)
+			} else {
+				defer aiStore.Close()
+				classifier = &ai.Classifier{Client: aiClient, Store: aiStore, DB: db, Log: logger}
+			}
+		}
+
+		// REST under /v1, its OpenAPI document, and MCP at /mcp (spec §9).
+		// Always authenticated, --open-catalog or not: unlike the catalog,
+		// the API can edit shelves.
+		svc := &api.Service{
+			DB:            db,
+			LibraryRoot:   cfg.LibraryRoot,
+			Progress:      store,
+			DefaultUser:   cfg.Kosync.User,
+			SaveShelves:   a.saveShelves,
+			ReloadShelves: func() error { return db.LoadShelves(cfg.Paths.ShelvesFile()) },
+			Version:       readVersion().String(),
+		}
+		if aiStore != nil {
+			svc.Genres = aiStore
+		}
+		apiSrv := api.NewServer(svc, authenticate, logger)
+		apiSrv.Realm = catalogTitle(cfg)
+		apiSrv.Mount(root)
+
+		// Mail (spec §16): newsletters sent to shelf's addresses become books.
+		var poller *mailbox.Poller
+		if !*noMail {
+			if mc := mailbox.FromEnv(); mc != nil {
+				poller = &mailbox.Poller{
+					Client:      mc,
+					DB:          db,
+					LibraryRoot: cfg.LibraryRoot,
+					StateFile:   cfg.Paths.MailStateFile(),
+					StageDir:    cfg.Paths.MailStageDir(),
+					Log:         logger,
+				}
+				if aiClient != nil {
+					poller.Summarize = summarizer(aiClient, logger)
+				}
+			}
+		}
+
+		root.Handle("/", srv.Handler())
+
 		httpSrv := &http.Server{
-			Addr:              *addr,
-			Handler:           handler,
+			Addr:              listen,
+			Handler:           outpost.SameOrigin(root),
 			ReadHeaderTimeout: 10 * time.Second,
 			// The device is on Wi-Fi and can be slow; these are generous but
 			// still bounded, so a stalled connection cannot hold a slot open
@@ -122,14 +221,60 @@ var cmdServe = &command{
 			ReadTimeout:  60 * time.Second,
 			WriteTimeout: 60 * time.Second,
 			IdleTimeout:  120 * time.Second,
+			ErrorLog:     slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 		}
 
-		ln, err := net.Listen("tcp", *addr)
+		ln, err := net.Listen("tcp", listen)
 		if err != nil {
-			return fmt.Errorf("listen on %s: %w", *addr, err)
+			return fmt.Errorf("listen on %s: %w", listen, err)
 		}
 
-		printServerBanner(ln.Addr(), store.Path(), srv.AllowRegistration, catalogPath)
+		if env.Supervised() {
+			logger.Info("listening",
+				"addr", ln.Addr().String(),
+				"progress_store", store.Path(),
+				"library", cfg.LibraryRoot,
+				"catalog", catalogPath != "",
+				"registration", srv.AllowRegistration,
+				"gateway", env.Gateway,
+				"ai", classifier != nil,
+				"mail", poller != nil)
+		} else {
+			printServerBanner(ln.Addr(), store.Path(), srv.AllowRegistration, catalogPath)
+		}
+
+		// Background work — the scan, AI classification, mail import — stops
+		// with bgCtx and is waited for before the stores and index close, so
+		// a SIGTERM never closes a database under a write in progress.
+		var bg sync.WaitGroup
+		defer bg.Wait()
+		bgCtx, cancelBG := context.WithCancel(ctx)
+		defer cancelBG()
+
+		// enrich asks the classifier for a pass. Buffered and never blocking:
+		// a request while one is pending is the same request.
+		enrich := make(chan struct{}, 1)
+		kick := func() {
+			select {
+			case enrich <- struct{}{}:
+			default:
+			}
+		}
+		if classifier != nil {
+			bg.Go(func() { runClassifier(bgCtx, logger, classifier, enrich) })
+		}
+		if *scan {
+			bg.Go(func() {
+				scanLibrary(bgCtx, logger, db, cfg)
+				kick()
+			})
+		} else {
+			kick()
+		}
+		if poller != nil {
+			poller.OnImport = kick
+			bg.Go(func() { poller.Run(bgCtx) })
+		}
 
 		errCh := make(chan error, 1)
 		go func() {
@@ -142,15 +287,197 @@ var cmdServe = &command{
 		case err := <-errCh:
 			return err
 		case <-ctx.Done():
-			fmt.Fprintln(os.Stderr, "\nshutting down…")
+			if env.Supervised() {
+				logger.Info("shutting down")
+			} else {
+				fmt.Fprintln(os.Stderr, "\nshutting down…")
+			}
+			cancelBG()
 			// Give in-flight requests a moment. A progress write that is
 			// half-committed when the process exits is a reading position
-			// silently lost, and this store is the only copy.
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			// silently lost, and this store is the only copy. Held under the
+			// ten seconds Outpost allows before SIGKILL (spec §6), with room
+			// left for the scan to notice cancellation and the stores to close.
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 			defer cancel()
-			return httpSrv.Shutdown(shutdownCtx)
+			if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+				logger.Warn("shutdown incomplete", "err", err)
+			}
+			return nil
 		}
 	},
+}
+
+// shutdownGrace is how long in-flight requests get after SIGTERM.
+const shutdownGrace = 8 * time.Second
+
+// listenAddr decides where to listen.
+//
+// --port and OUTPOST_PORT bind loopback only. They exist for running behind
+// Outpost, where nothing should reach shelf except through its own node and
+// gateway (spec §1); a reader on the LAN needs --listen or the config's
+// kosync.listen instead. Under Outpost there is no fallback to the config's
+// address: its default binds every interface, and a port nobody declared is
+// one Outpost health-checks without anything listening.
+func listenAddr(listen, legacy string, port int, env outpost.Env, configured string) (string, error) {
+	if port < 0 || port > 65535 {
+		return "", fmt.Errorf("%w: --port %d is out of range", errUsage, port)
+	}
+	switch {
+	case listen != "":
+		return listen, nil
+	case legacy != "":
+		return legacy, nil
+	case port > 0:
+		return loopback(port), nil
+	case env.Port > 0:
+		return loopback(env.Port), nil
+	case env.Supervised():
+		return "", fmt.Errorf("no port: pass --port or set %s", outpost.EnvPort)
+	case configured != "":
+		return configured, nil
+	default:
+		return ":8080", nil
+	}
+}
+
+func loopback(port int) string { return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) }
+
+// serveLogger picks the log format.
+//
+// Under Outpost, one JSON object per line with no timestamp: Outpost stamps
+// every line itself and reads the level and message from these keys (spec §7).
+// Run by hand, the human-readable text format on stderr, as before.
+func serveLogger(env outpost.Env, verbose bool) *slog.Logger {
+	level := slog.LevelInfo
+	if verbose {
+		level = slog.LevelDebug
+	}
+	if env.Supervised() {
+		return slog.New(outpostLogHandler(os.Stdout, level))
+	}
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+}
+
+// outpostLogHandler writes the JSON lines Outpost parses, minus the time.
+func outpostLogHandler(w io.Writer, level slog.Leveler) slog.Handler {
+	return slog.NewJSONHandler(w, &slog.HandlerOptions{
+		Level: level,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})
+}
+
+// gatewayIdentity recognises requests Outpost's login gateway has signed in.
+//
+// Returns nil — Basic only — unless the gateway is on and has said where its
+// keys are. Only the signed X-Outpost-Identity is accepted, never the plain
+// X-Outpost-User beside it: the catalog serves the whole library, and any
+// process on the machine can reach the loopback port and set that header.
+func gatewayIdentity(env outpost.Env, logger *slog.Logger) func(*http.Request) (string, bool) {
+	if !env.Gateway {
+		return nil
+	}
+	v := outpost.NewVerifier(env)
+	if v == nil {
+		logger.Warn("login gateway is on but OUTPOST_ISSUER or OUTPOST_JWKS_URL is unset; " +
+			"the catalog will ask signed-in users for their shelf password")
+		return nil
+	}
+	return func(r *http.Request) (string, bool) {
+		id, err := v.VerifyRequest(r)
+		if err != nil {
+			if !errors.Is(err, outpost.ErrNoToken) {
+				logger.Warn("identity token rejected", "err", err, "path", r.URL.Path)
+			}
+			return "", false
+		}
+		return id.User, true
+	}
+}
+
+// classifyInterval is how often the classifier looks for books added by
+// some route it was not told about, such as `shelf import` run by hand.
+const classifyInterval = time.Hour
+
+// runClassifier runs a classification pass when asked and once an hour, one
+// pass at a time. A pass costs nothing for books already classified, so the
+// hourly one only ever spends on new books.
+func runClassifier(ctx context.Context, logger *slog.Logger, c *ai.Classifier, enrich <-chan struct{}) {
+	tick := time.NewTicker(classifyInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-enrich:
+		case <-tick.C:
+		}
+		if err := c.Run(ctx); err != nil && ctx.Err() == nil {
+			logger.Error("genre classification failed", "err", err)
+		}
+	}
+}
+
+// summarizer has the operator's LLM write a mail-derived book's description.
+//
+// Asked once per message, when it is imported, and baked into the EPUB, so
+// it is never asked again. Errors are returned for the poller to ignore:
+// the message is imported without a summary rather than held back.
+func summarizer(c *ai.Client, logger *slog.Logger) func(ctx context.Context, subject, text string) (string, error) {
+	const system = "You write the description for an email newsletter that has been " +
+		"turned into an e-book. Reply with two or three plain sentences saying what " +
+		"it covers. No preamble, no markdown, no quotation marks."
+	return func(ctx context.Context, subject, text string) (string, error) {
+		out, model, err := c.Chat(ctx, system, "Subject: "+subject+"\n\n"+text, 200)
+		if err != nil {
+			logger.Debug("mail summary unavailable", "err", err)
+			return "", err
+		}
+		logger.Debug("mail summarised", "model", model)
+		return strings.TrimSpace(out), nil
+	}
+}
+
+// scanLibrary brings the index up to date with the library on disk.
+//
+// Run in the background because a large first scan takes minutes and the
+// healthcheck must not wait for it: the index is a cache, so serving it while
+// it fills is correct, only incomplete.
+func scanLibrary(ctx context.Context, logger *slog.Logger, db *library.DB, cfg *config.Config) {
+	// The default library under Outpost storage does not exist on a fresh
+	// install; creating it gives the operator somewhere obvious to put books.
+	if dir := cfg.Paths.LibraryDir(); dir != "" && dir == cfg.LibraryRoot {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			logger.Error("create library directory", "path", dir, "err", err)
+			return
+		}
+	}
+
+	logger.Info("scan started", "library", cfg.LibraryRoot)
+	res, err := db.Scan(ctx, cfg.LibraryRoot, library.ScanOptions{
+		Progress: func(p library.ScanProgress) {
+			if p.Action == library.ActionFailed {
+				logger.Warn("could not index", "path", p.Path, "err", p.Err)
+			}
+		},
+	})
+	switch {
+	case errors.Is(err, context.Canceled):
+		logger.Info("scan interrupted")
+	case err != nil:
+		// Not fatal: the previous index still serves, and exiting would have
+		// Outpost restart a process whose real problem is a missing directory.
+		logger.Error("scan failed", "library", cfg.LibraryRoot, "err", err)
+	default:
+		logger.Info("scan finished",
+			"added", res.Added, "updated", res.Updated, "unchanged", res.Unchanged,
+			"removed", res.Removed, "skipped", res.Skipped, "failed", len(res.Errors))
+	}
 }
 
 // printServerBanner tells the user what to type into the reader.
@@ -189,6 +516,7 @@ func printServerBanner(addr net.Addr, storePath string, registration bool, catal
 		}
 	}
 
+	fmt.Println("\nAPI: /v1 (described at /v1/openapi.json); MCP: /mcp. Both take the same account.")
 	fmt.Println()
 	if registration {
 		fmt.Println("Registration is open, so the reader can create its account.")

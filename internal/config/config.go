@@ -168,6 +168,12 @@ func LoadFile(file string, paths Paths) (Config, error) {
 	cfg := Default()
 	cfg.Paths = paths
 	cfg.File = file
+	// Under Outpost the books default to living inside storage too, so the
+	// library is in the backup alongside the index and shelves that describe
+	// it. A library_root in the file, or --library, still wins.
+	if dir := paths.LibraryDir(); dir != "" {
+		cfg.LibraryRoot = dir
+	}
 
 	data, err := os.ReadFile(file)
 	switch {

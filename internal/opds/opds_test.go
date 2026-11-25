@@ -530,6 +530,50 @@ func TestCatalogAcceptsBasicAuth(t *testing.T) {
 	}
 }
 
+// A request the front proxy vouches for skips Basic; anything else still has
+// to present it. The second half is what keeps the reader working on a public
+// path, where no identity reaches shelf at all.
+func TestIdentifiedRequestSkipsBasic(t *testing.T) {
+	c := newCatalog(t, book(1))
+	s := NewServer(c, nil)
+	s.Auth = staticAuth{"reader": "pw"}
+	s.Identify = func(r *http.Request) (string, bool) {
+		return "ann", r.Header.Get("X-Test-Identity") == "valid"
+	}
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	for _, tc := range []struct {
+		name     string
+		identity string
+		basic    bool
+		want     int
+	}{
+		{"verified identity", "valid", false, http.StatusOK},
+		{"unverified identity", "forged", false, http.StatusUnauthorized},
+		{"no identity, basic", "", true, http.StatusOK},
+		{"no identity, nothing", "", false, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("GET", srv.URL+"/opds", nil)
+			if tc.identity != "" {
+				req.Header.Set("X-Test-Identity", tc.identity)
+			}
+			if tc.basic {
+				req.SetBasicAuth("reader", "pw")
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != tc.want {
+				t.Errorf("got %d, want %d", resp.StatusCode, tc.want)
+			}
+		})
+	}
+}
+
 func TestAnonymousCatalogWhenAuthIsUnset(t *testing.T) {
 	c := newCatalog(t, book(1))
 	srv := newServer(t, c, nil)

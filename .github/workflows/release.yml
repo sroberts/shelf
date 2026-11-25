@@ -72,8 +72,16 @@ jobs:
       - name: Generate consolidated checksums
         working-directory: release-assets
         run: |
-          cat *.sha256 > sha256sums.txt
+          # SHA256SUMS is the name `outpost add` and `outpost update` look for
+          # to verify a download; sha256sums.txt is kept for existing scripts.
+          cat *.sha256 > SHA256SUMS
+          cp SHA256SUMS sha256sums.txt
           rm -f *.sha256
+
+      - name: Attach the Outpost descriptor
+        # Attached to the release rather than only kept in the repo, so the
+        # copy Outpost reads is the one that shipped with these binaries.
+        run: cp outpost.toml release-assets/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

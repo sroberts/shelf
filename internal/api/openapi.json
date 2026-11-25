@@ -1,0 +1,885 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "shelf",
+    "version": "1",
+    "summary": "An e-book library for CrossPoint e-readers",
+    "description": "Search the library, read reading progress pushed by the reader, and manage shelves. Book ids are index row ids and are renumbered whenever the index is rebuilt, so look one up just before using it. Under Outpost's login gateway requests are already authenticated; otherwise use HTTP Basic with a shelf account (`shelf user add`). The same operations are offered as MCP tools at /mcp."
+  },
+  "security": [
+    {
+      "basic": []
+    },
+    {
+      "outpost": []
+    }
+  ],
+  "paths": {
+    "/v1/openapi.json": {
+      "get": {
+        "operationId": "getOpenAPI",
+        "summary": "This document",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
+    "/v1/books": {
+      "get": {
+        "operationId": "searchBooks",
+        "summary": "Search books",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "query: bare words plus author:, series:, tag:, title: qualifiers, with and/or/not; empty lists everything"
+          },
+          {
+            "name": "genre",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "only books the AI model classified into this genre"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "title",
+                "author",
+                "series",
+                "size",
+                "added",
+                "modified",
+                "path",
+                "format"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "user",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "whose reading progress to include; defaults to the caller when it is a shelf account, else [kosync] user"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/books/{id}": {
+      "get": {
+        "operationId": "getBook",
+        "summary": "One book",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "index id; renumbered when the index is rebuilt"
+          },
+          {
+            "name": "user",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "whose reading progress to include; defaults to the caller when it is a shelf account, else [kosync] user"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Book"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/books/{id}/file": {
+      "get": {
+        "operationId": "downloadBook",
+        "summary": "Download a book's file",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "index id; renumbered when the index is rebuilt"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the file as stored in the library",
+            "content": {
+              "application/epub+zip": {},
+              "application/octet-stream": {}
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/authors": {
+      "get": {
+        "operationId": "listAuthors",
+        "summary": "Authors with book counts",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "authors"
+                  ],
+                  "properties": {
+                    "authors": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Count"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/series": {
+      "get": {
+        "operationId": "listSeries",
+        "summary": "Series with book counts",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "series"
+                  ],
+                  "properties": {
+                    "series": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Count"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/tags": {
+      "get": {
+        "operationId": "listTags",
+        "summary": "Tags with book counts",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "tags"
+                  ],
+                  "properties": {
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Count"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/genres": {
+      "get": {
+        "operationId": "listGenres",
+        "summary": "AI-assigned genres with book counts; empty when AI models are off",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "genres"
+                  ],
+                  "properties": {
+                    "genres": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Count"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/shelves": {
+      "get": {
+        "operationId": "listShelves",
+        "summary": "Every shelf",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "shelves"
+                  ],
+                  "properties": {
+                    "shelves": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Shelf"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/shelves/{name}": {
+      "get": {
+        "operationId": "getShelf",
+        "summary": "One shelf and its books",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "whose reading progress to include; defaults to the caller when it is a shelf account, else [kosync] user"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShelfDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/shelves/{name}/books": {
+      "post": {
+        "operationId": "addToShelf",
+        "summary": "Add books to a manual shelf",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Shelf"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "415": {
+            "description": "the body was not application/json"
+          }
+        }
+      }
+    },
+    "/v1/shelves/{name}/books/{id}": {
+      "delete": {
+        "operationId": "removeFromShelf",
+        "summary": "Take a book off a manual shelf; the file stays in the library",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "index id; renumbered when the index is rebuilt"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Shelf"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/stats": {
+      "get": {
+        "operationId": "libraryStats",
+        "summary": "Library statistics",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stats"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/progress": {
+      "get": {
+        "operationId": "readingProgress",
+        "summary": "Books a reader has opened, most recent first",
+        "parameters": [
+          {
+            "name": "user",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "whose reading progress to include; defaults to the caller when it is a shelf account, else [kosync] user"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "basic": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "a shelf account, as created by `shelf user add`"
+      },
+      "outpost": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "an Outpost personal access token (opat_…), when shelf runs behind Outpost's login gateway"
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "no acceptable credentials",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "no such book or shelf",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "an invalid parameter or query",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "Book": {
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "title",
+          "authors",
+          "format",
+          "size",
+          "tags",
+          "sha256",
+          "added_unix"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "path": {
+            "type": "string",
+            "description": "relative to the library root"
+          },
+          "title": {
+            "type": "string"
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "author_sort": {
+            "type": "string"
+          },
+          "series": {
+            "type": "string"
+          },
+          "series_index": {
+            "type": "number"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "epub",
+              "txt",
+              "xtc",
+              "pdf"
+            ]
+          },
+          "size": {
+            "type": "integer"
+          },
+          "language": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "pubdate": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "identifiers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "added_unix": {
+            "type": "integer"
+          },
+          "genre": {
+            "type": "string",
+            "description": "assigned by the operator's System 1 model, when AI models are on"
+          },
+          "percent_read": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      },
+      "BookList": {
+        "type": "object",
+        "required": [
+          "books",
+          "offset",
+          "limit",
+          "more"
+        ],
+        "properties": {
+          "books": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Book"
+            }
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "more": {
+            "type": "boolean",
+            "description": "another page follows"
+          },
+          "user": {
+            "type": "string"
+          }
+        }
+      },
+      "Count": {
+        "type": "object",
+        "required": [
+          "value",
+          "count"
+        ],
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        }
+      },
+      "Shelf": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "books"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "query"
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "books": {
+            "type": "integer"
+          }
+        }
+      },
+      "ShelfDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Shelf"
+          },
+          {
+            "type": "object",
+            "required": [
+              "contents"
+            ],
+            "properties": {
+              "contents": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Book"
+                }
+              },
+              "user": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "books": {
+            "type": "integer"
+          },
+          "authors": {
+            "type": "integer"
+          },
+          "series": {
+            "type": "integer"
+          },
+          "tags": {
+            "type": "integer"
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "formats": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "genres": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ProgressList": {
+        "type": "object",
+        "required": [
+          "user",
+          "books"
+        ],
+        "properties": {
+          "user": {
+            "type": "string"
+          },
+          "books": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "book",
+                "percentage",
+                "updated_unix"
+              ],
+              "properties": {
+                "book": {
+                  "$ref": "#/components/schemas/Book"
+                },
+                "percentage": {
+                  "type": "number"
+                },
+                "device": {
+                  "type": "string"
+                },
+                "updated_unix": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

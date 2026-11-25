@@ -14,7 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The TUI can add a network device: press `n` on the Devices screen, prefilled from a discovered device under the cursor. The device is appended to `config.toml` as a `[[device]]` block, leaving existing content and comments untouched, and is usable without restarting.
 
+- `shelf serve` conforms to the Outpost service spec (v0.9.4): `GET /up` healthcheck, `--port` and `OUTPOST_PORT` binding loopback only, all state under `OUTPOST_STORAGE_DIR`, JSON log lines with levels, and a shutdown held under Outpost's ten-second SIGKILL deadline. Behind Outpost's login gateway the OPDS catalog accepts a verified `X-Outpost-Identity` token in place of a password.
+- `shelf serve --scan` re-indexes the library in the background at startup.
+- `shelf serve` offers a JSON REST API under `/v1` (described by an OpenAPI 3.1 document at `/v1/openapi.json`) and an MCP server at `/mcp` (Streamable HTTP), both authenticated with a shelf account or an Outpost identity. They search, browse and download books, manage manual shelves, and report stats and reading progress.
+- Under Outpost, `shelf serve` uses the operator's System 1 model to classify each book's genre once, keeping the answers in `ai.db`. It also imports mail sent to its Outpost addresses as EPUB books under `Mail/`, with an LLM-written description when a model is available. `--no-ai` and `--no-mail` turn these off.
+- `outpost.toml` descriptor, attached to each release with a `SHA256SUMS` file, so `outpost add` can install and verify shelf.
+
 ### Changed
+- State-changing requests to `shelf serve` whose `Origin` or `Referer` names another host are refused with 403. The reader sends neither header and is unaffected.
 - The TUI is built on Bubble Tea v2, Lip Gloss v2 and Bubbles v2. Bubble Tea v1 queried the terminal's background colour at package init, so every CLI command, `shelf version` included, sent an escape sequence to the terminal and waited up to five seconds for a reply some terminals never send. The query now runs only when the TUI starts.
 
 ## [0.1.0] - 2026-09-14

@@ -36,6 +36,15 @@ type Server struct {
 
 	// Realm names the catalog in the browser's credential prompt.
 	Realm string
+
+	// Identify, when set, recognises a request a front proxy has already
+	// authenticated, which then skips Basic. Under Outpost's login gateway
+	// that is a verified identity token: a browser user signed in there would
+	// otherwise be asked for a second password. A request it does not
+	// recognise — the reader, on a public path, carries no token — still
+	// falls through to Basic, so this only ever widens who gets in by what
+	// the proxy vouches for.
+	Identify func(*http.Request) (user string, ok bool)
 }
 
 // NewServer builds a server over a catalog.
@@ -112,6 +121,12 @@ func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
 		if s.Auth == nil {
 			next(w, r)
 			return
+		}
+		if s.Identify != nil {
+			if _, ok := s.Identify(r); ok {
+				next(w, r)
+				return
+			}
 		}
 
 		username, password, ok := r.BasicAuth()

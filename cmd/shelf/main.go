@@ -6,11 +6,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sort"
 	"strings"
 	"syscall"
+
+	"github.com/sroberts/shelf/internal/outpost"
 )
 
 // Exit codes. Distinguishing usage errors from runtime failures is what makes
@@ -127,6 +130,14 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "shelf %s: %v\n\n", cmd.name, err)
 		fmt.Fprintf(os.Stderr, "usage: shelf %s\n", cmd.usage)
 		return exitUsage
+
+	case outpost.FromEnv().Supervised():
+		// Outpost files every line by level, and a bare "shelf serve: ..."
+		// has none, so the one line that explains a crash loop would be left
+		// out of an errors-only view (spec §7).
+		slog.New(outpostLogHandler(os.Stderr, slog.LevelError)).
+			Error(err.Error(), "command", cmd.name)
+		return exitError
 
 	default:
 		fmt.Fprintf(os.Stderr, "shelf %s: %v\n", cmd.name, err)

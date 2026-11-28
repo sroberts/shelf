@@ -3,7 +3,6 @@ package epub
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -189,10 +188,4 @@ func clean(s string) string {
 		}
 		return r
 	}, s)
-}
-
-func simpleEsc(s string) string {
-	var b bytes.Buffer
-	_ = xml.EscapeText(&b, []byte(clean(s)))
-	return b.String()
 }

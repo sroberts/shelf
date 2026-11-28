@@ -19,3 +19,10 @@
 
 # OS
 .DS_Store
+
+# Web UI: dependencies, and the build the binary embeds (cd web && npm run build)
+/web/node_modules/
+/internal/ui/dist/
+
+# Review captures from impeccable runs; regenerated, not source.
+/.impeccable/review/

@@ -1,0 +1,361 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scrollbar-color: var(--hairline) transparent;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 var(--text-body) / 1.5 var(--sans);
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'kern';
+}
+
+::selection {
+  background: var(--ink);
+  color: var(--ground);
+}
+
+/* One family carries everything; hierarchy is size and weight. */
+h1,
+h2,
+h3 {
+  font-family: var(--sans);
+  font-weight: 650;
+  line-height: 1.15;
+  margin: 0;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--text-display);
+  letter-spacing: -0.025em;
+}
+
+h2 {
+  font-size: var(--text-title);
+  letter-spacing: -0.015em;
+}
+
+h3 {
+  font-size: var(--text-body);
+  letter-spacing: -0.01em;
+}
+
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+/* Links are ink with an underline: near-black is the only accent. */
+a {
+  color: var(--ink);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+code,
+kbd {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--tile-2);
+  border-radius: 5px;
+  padding: 0.08em 0.35em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+/* Buttons. One near-black primary per area; the rest are quiet grey. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.95rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--tile-2);
+  color: var(--ink);
+  font-weight: 550;
+  font-size: var(--text-meta);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s var(--ease-out),
+    transform 0.1s var(--ease-out);
+}
+
+.btn:hover {
+  background: color-mix(in srgb, var(--tile-2) 82%, var(--ink));
+  text-decoration: none;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn.primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn.danger {
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+
+.btn.danger:hover {
+  background: color-mix(in srgb, var(--danger-wash) 80%, var(--danger));
+}
+
+.btn.ghost {
+  background: transparent;
+}
+
+.btn.ghost:hover {
+  background: var(--tile);
+}
+
+.btn.small {
+  min-height: 1.875rem;
+  padding: 0.2rem 0.7rem;
+  font-size: var(--text-small);
+}
+
+.btn.icon {
+  padding: 0.4rem;
+  min-width: 2.25rem;
+}
+
+/* Fields */
+.field {
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+}
+
+.field > span,
+.label {
+  font-size: var(--text-meta);
+  font-weight: 550;
+  color: var(--ink);
+}
+
+.field small {
+  color: var(--muted);
+  font-size: var(--text-small);
+  line-height: 1.45;
+}
+
+input[type='text'],
+input[type='search'],
+input[type='number'],
+input[type='url'],
+select,
+textarea {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--field-border);
+  border-radius: 10px;
+  background: var(--ground);
+  font-size: 1rem; /* 16px keeps iOS from zooming in on focus */
+}
+
+/* A select draws its own chevron, so it matches the rest of the controls
+   rather than each platform's. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2.25rem;
+  background-image: var(--chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.8rem center;
+  cursor: pointer;
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+textarea {
+  min-height: 7rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.check {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.check input {
+  margin-top: 0.2rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
+}
+
+/* Fingers need bigger targets than a pointer does. */
+@media (pointer: coarse) {
+  .btn,
+  input[type='text'],
+  input[type='search'],
+  input[type='number'],
+  input[type='url'],
+  select {
+    min-height: 2.75rem;
+  }
+
+  .btn.small {
+    min-height: 2.5rem;
+  }
+
+  .check input {
+    width: 1.3rem;
+    height: 1.3rem;
+    margin-top: 0.1rem;
+  }
+}
+
+/* Surfaces are flat and separated by tone, never by a shadow. */
+.panel {
+  background: var(--tile);
+  border-radius: var(--radius-tile);
+  padding: 1.5rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: var(--text-meta);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.notice {
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  background: var(--tile);
+  color: var(--ink-2);
+  font-size: var(--text-meta);
+}
+
+.notice.warn {
+  background: var(--caution-wash);
+  color: var(--ink);
+}
+
+.notice.error {
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.stack {
+  display: grid;
+  gap: var(--gap);
+}
+
+.row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+dialog {
+  border: 0;
+  border-radius: var(--radius-tile);
+  background: var(--ground);
+  color: var(--ink);
+  padding: 0;
+  width: min(32rem, calc(100vw - 2rem));
+  box-shadow: var(--float);
+}
+
+dialog::backdrop {
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+}
+
+dialog[open] {
+  animation: rise 0.28s var(--ease-out);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

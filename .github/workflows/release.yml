@@ -32,6 +32,23 @@ jobs:
           check-latest: true
           cache: true
 
+      # The web UI is embedded in the binary, so it is built first. Without
+      # this step the binary would serve a "UI not built" page.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the web UI
+        working-directory: web
+        run: npm ci && npm test && npm run build
+
+      - name: Check the UI is embedded
+        env:
+          SHELF_REQUIRE_UI: "1"
+        run: go test ./internal/ui/
+
       - name: Build static binary
         env:
           GOOS: ${{ matrix.os }}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="Your book library, and what is on your reader." />
+    <!-- Stamped at build; the service worker checks it so it never caches a
+         sign-in page or another build's shell as this one (build/pwa.js). -->
+    <meta name="shelf-build" content="%SHELF_BUILD%" />
+    <!-- With credentials, so the Outpost gateway lets the manifest through. -->
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="shelf" />
+    <title>shelf</title>
+  </head>
+  <body>
+    <noscript>shelf needs JavaScript to show the library. The catalog at /opds works without it.</noscript>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

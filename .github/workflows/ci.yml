@@ -58,6 +58,35 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
+  web:
+    name: Web UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install, test, type-check and build the UI
+        working-directory: web
+        run: npm ci && npm test && npm run check && npm run build
+
+      # The build lands in internal/ui/dist; with it present, the embed must
+      # pick it up, which is what a release binary relies on.
+      - name: Check the UI is embedded
+        env:
+          SHELF_REQUIRE_UI: "1"
+        run: go test ./internal/ui/
+
   test:
     name: Test & Coverage (${{ matrix.os }})
     needs: [lint]

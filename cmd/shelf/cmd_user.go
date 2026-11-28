@@ -17,11 +17,11 @@ import (
 
 var cmdUser = &command{
 	name:    "user",
-	summary: "manage reading-progress sync accounts",
-	usage:   "user add|ls|rm|passwd [NAME]",
+	summary: "manage reader and admin accounts",
+	usage:   "user add|ls|rm|passwd|role [NAME]",
 	run: func(ctx context.Context, a *app, args []string) error {
 		if len(args) == 0 {
-			return fmt.Errorf("%w: expected a subcommand (add, ls, rm, passwd)", errUsage)
+			return fmt.Errorf("%w: expected a subcommand (add, ls, rm, passwd, role)", errUsage)
 		}
 		switch args[0] {
 		case "add", "create":
@@ -32,6 +32,8 @@ var cmdUser = &command{
 			return userRemove(a, args[1:])
 		case "passwd", "password":
 			return userPasswd(a, args[1:])
+		case "role":
+			return userRole(a, args[1:])
 		default:
 			return fmt.Errorf("%w: unknown subcommand %q", errUsage, args[0])
 		}
@@ -62,6 +64,8 @@ func userAdd(a *app, args []string) error {
 	generate := fs.Bool("generate", false,
 		"make up a password that is easy to type on the reader and safe to expose through Funnel, and print it")
 	url := fs.String("url", "", "the address the reader reaches shelf at, such as a Funnel URL, for the printed setup")
+	admin := fs.Bool("admin", false,
+		"also allow the web UI, API and MCP (a reader account gets only the catalog and progress sync)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -95,7 +99,11 @@ func userAdd(a *app, args []string) error {
 		return errors.New("password must not be empty")
 	}
 
-	if err := store.CreateUser(username, kosync.PasswordKey(pw)); err != nil {
+	create := store.CreateUser
+	if *admin {
+		create = store.CreateAdmin
+	}
+	if err := create(username, kosync.PasswordKey(pw)); err != nil {
 		if errors.Is(err, kosync.ErrUserExists) {
 			return fmt.Errorf("%q already exists; use 'shelf user passwd %s' to change its password",
 				username, username)
@@ -103,7 +111,11 @@ func userAdd(a *app, args []string) error {
 		return err
 	}
 
-	fmt.Printf("created %q\n\n", username)
+	role := "reader account: the catalog and progress sync"
+	if *admin {
+		role = "admin account: also the web UI, API and MCP"
+	}
+	fmt.Printf("created %q (%s)\n\n", username, role)
 	printReaderInstructions(a, username, shownPassword(*generate, pw), *url)
 	return nil
 }
@@ -132,7 +144,8 @@ func userList(a *app, args []string) error {
 				Username string `json:"username"`
 				Created  int64  `json:"created_unix"`
 				Books    int    `json:"books_with_progress"`
-			}{u.Username, u.CreatedAt, u.Books}); err != nil {
+				Role     string `json:"role"`
+			}{u.Username, u.CreatedAt, u.Books, roleName(u.Admin)}); err != nil {
 				return err
 			}
 		}
@@ -146,12 +159,52 @@ func userList(a *app, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "USERNAME\tBOOKS READ\tCREATED")
+	fmt.Fprintln(w, "USERNAME\tROLE\tBOOKS READ\tCREATED")
 	for _, u := range users {
-		fmt.Fprintf(w, "%s\t%d\t%s\n", u.Username, u.Books,
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", u.Username, roleName(u.Admin), u.Books,
 			time.Unix(u.CreatedAt, 0).Format("2006-01-02"))
 	}
 	return w.Flush()
+}
+
+func roleName(admin bool) string {
+	if admin {
+		return "admin"
+	}
+	return "reader"
+}
+
+// userRole changes what an account may use. Done here, at the terminal, and
+// not from the web UI: granting the API should be a step outside any one
+// browser session.
+func userRole(a *app, args []string) error {
+	fs := newFlagSet("user role")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 || (fs.Arg(1) != "admin" && fs.Arg(1) != "reader") {
+		return fmt.Errorf("%w: expected NAME admin|reader", errUsage)
+	}
+	username := strings.TrimSpace(fs.Arg(0))
+
+	store, err := openProgressStore(a)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	if err := store.SetAdmin(username, fs.Arg(1) == "admin"); err != nil {
+		if errors.Is(err, kosync.ErrNoSuchUser) {
+			return fmt.Errorf("no account called %q", username)
+		}
+		return err
+	}
+	if fs.Arg(1) == "admin" {
+		fmt.Printf("%q is an admin: the catalog, progress sync, and the web UI, API and MCP\n", username)
+	} else {
+		fmt.Printf("%q is a reader account: the catalog and progress sync only\n", username)
+	}
+	return nil
 }
 
 func userRemove(a *app, args []string) error {

@@ -100,9 +100,15 @@ func TestE2EServeOutpostExtras(t *testing.T) {
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 	waitHealthy(t, base+"/up")
 
-	// An account the operator made, which signs in everywhere.
-	if _, stderr, code := runShelfWithEnvOnly(t, cmd.Env, "user", "add", "--password", "pw", "reader"); code != 0 {
+	// An admin the operator made, which signs in everywhere.
+	if _, stderr, code := runShelfWithEnvOnly(t, cmd.Env, "user", "add", "--admin", "--password", "pw", "reader"); code != 0 {
 		t.Fatalf("user add: %s", stderr)
+	}
+	// A reader account the operator made for the e-reader: its password is
+	// typed on the device and may cross the internet, so it opens only the
+	// catalog and progress sync, exactly like a self-registered one.
+	if _, stderr, code := runShelfWithEnvOnly(t, cmd.Env, "user", "add", "--password", "pw", "x4"); code != 0 {
+		t.Fatalf("user add x4: %s", stderr)
 	}
 
 	// One the reader registered itself, through an endpoint that asks
@@ -113,24 +119,26 @@ func TestE2EServeOutpostExtras(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	for _, path := range []string{"/v1/books", "/v1/accounts", "/"} {
-		req, _ := http.NewRequest("GET", base+path, nil)
-		req.SetBasicAuth("stranger", "pw")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
+	for _, who := range []string{"stranger", "x4"} {
+		for _, path := range []string{"/v1/books", "/v1/accounts", "/"} {
+			req, _ := http.NewRequest("GET", base+path, nil)
+			req.SetBasicAuth(who, "pw")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("reader account %s on %s: %d, want 401", who, path, resp.StatusCode)
+			}
+		}
+		req, _ := http.NewRequest("GET", base+"/opds", nil)
+		req.SetBasicAuth(who, "pw")
+		if resp, err := http.DefaultClient.Do(req); err != nil {
 			t.Fatal(err)
+		} else if resp.Body.Close(); resp.StatusCode != http.StatusOK {
+			t.Errorf("reader account %s on /opds: %d, want 200", who, resp.StatusCode)
 		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("self-registered account on %s: %d, want 401", path, resp.StatusCode)
-		}
-	}
-	req, _ := http.NewRequest("GET", base+"/opds", nil)
-	req.SetBasicAuth("stranger", "pw")
-	if resp, err := http.DefaultClient.Do(req); err != nil {
-		t.Fatal(err)
-	} else if resp.Body.Close(); resp.StatusCode != http.StatusOK {
-		t.Errorf("self-registered account on /opds: %d, want 200", resp.StatusCode)
 	}
 
 	// The OpenAPI document is public; the API itself is not.
@@ -176,7 +184,7 @@ func TestE2EServeOutpostExtras(t *testing.T) {
 
 	// The same book through MCP.
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_books","arguments":{"genre":"science-fiction"}}}`
-	req, _ = http.NewRequest("POST", base+"/mcp", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", base+"/mcp", strings.NewReader(body))
 	req.SetBasicAuth("reader", "pw")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")

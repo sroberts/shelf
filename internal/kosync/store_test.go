@@ -386,3 +386,82 @@ func TestSelfRegisteredAccountsAreMarked(t *testing.T) {
 		t.Errorf("POST /users/create: %d, marked=%v", resp.StatusCode, self)
 	}
 }
+
+// Admin is a grant: a new account, from any route, is a reader account; an
+// admin is made on purpose; and upgrading a store made before roles keeps every
+// operator account an admin so the owner is not locked out.
+func TestAdminIsAGrant(t *testing.T) {
+	store := newStore(t)
+	if err := store.CreateUser("x4", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateAdmin("me", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterUser("stranger", "k"); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{"x4": false, "me": true, "stranger": false} {
+		if got, err := store.IsAdmin(name); err != nil || got != want {
+			t.Errorf("IsAdmin(%s) = %v, %v; want %v", name, got, err, want)
+		}
+	}
+	if err := store.SetAdmin("x4", true); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := store.IsAdmin("x4"); !ok {
+		t.Error("SetAdmin(true) did not grant")
+	}
+	if err := store.SetAdmin("nobody", true); !errors.Is(err, ErrNoSuchUser) {
+		t.Errorf("SetAdmin on a missing account: %v", err)
+	}
+	// A deleted admin's name, reused, starts as a reader.
+	if err := store.DeleteUser("me"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateUser("me", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := store.IsAdmin("me"); ok {
+		t.Error("a recreated account inherited admin")
+	}
+	users, _ := store.UserList()
+	roles := map[string]bool{}
+	for _, u := range users {
+		roles[u.Username] = u.Admin
+	}
+	if !roles["x4"] || roles["me"] || roles["stranger"] {
+		t.Errorf("UserList roles = %v", roles)
+	}
+}
+
+func TestUpgradeMakesExistingOperatorAccountsAdmins(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "progress.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateUser("owner", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterUser("stranger", "k"); err != nil {
+		t.Fatal(err)
+	}
+	// Stand in for a store from before roles existed.
+	if _, err := store.db.Exec(`DROP TABLE admins`); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	store, err = OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if ok, _ := store.IsAdmin("owner"); !ok {
+		t.Error("an account from before roles lost its access on upgrade")
+	}
+	if ok, _ := store.IsAdmin("stranger"); ok {
+		t.Error("a self-registered account became an admin on upgrade")
+	}
+}

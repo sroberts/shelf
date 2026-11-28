@@ -114,7 +114,7 @@
   <div class="head">
     <div>
       <h2 id="accounts-title">Reader accounts</h2>
-      <p class="muted small">What the reader signs in with, for the catalog and for progress sync. It can’t sign in to Outpost, so it uses one of these.</p>
+      <p class="muted small">What the reader signs in with, for the catalog and for progress sync. A new account opens only those, so a password typed on the reader can’t reach this page; admins are made with <code>shelf user role NAME admin</code>.</p>
     </div>
     {#if accounts?.length && !creating}
       <button class="btn" onclick={open}><Plus size={17} /> New account</button>
@@ -174,7 +174,7 @@
       {#each accounts as acct (acct.name)}
         <li>
           <span class="who">
-            <span class="name">{acct.name}</span>
+            <span class="name">{acct.name}{#if acct.admin}<span class="role">Admin</span>{/if}</span>
             <span class="muted small">{acct.books} {acct.books === 1 ? 'book' : 'books'} with a reading position{#if acct.created_unix}{' · '}made {relativeTime(acct.created_unix)}{/if}</span>
           </span>
           <span class="acts">
@@ -202,9 +202,9 @@
   <Confirm
     bind:open={confirmOpen}
     title="Delete {deleting.name}?"
-    body={deleting.books
+    body={(deleting.admin ? `${deleting.name} is an admin: signing in to this page with it stops working too. ` : '') + (deleting.books
       ? `Its reading positions in ${deleting.books} ${deleting.books === 1 ? 'book' : 'books'} are deleted with it, and a reader signed in as ${deleting.name} stops syncing. The reader keeps its own positions.`
-      : `A reader signed in as ${deleting.name} stops syncing and loses the catalog.`}
+      : `A reader signed in as ${deleting.name} stops syncing and loses the catalog.`)}
     confirmLabel="Delete account"
     danger
     onconfirm={remove}
@@ -333,7 +333,19 @@
   }
 
   .name {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
     font-weight: 600;
+  }
+
+  .role {
+    font-size: var(--text-small);
+    font-weight: 550;
+    color: var(--ink-2);
+    background: var(--ground);
+    border-radius: 999px;
+    padding: 0 0.5rem;
   }
 
   .acts {

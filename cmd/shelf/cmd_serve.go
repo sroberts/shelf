@@ -134,14 +134,14 @@ var cmdServe = &command{
 				return "", false
 			}
 			limiter.Succeeded(r)
-			// An account made through POST /users/create came through an
-			// endpoint that asks nobody, open by default and reachable by
-			// any process on the machine. It reads the catalog and syncs
-			// progress, which is all registration ever offered; it does not
-			// get the API, which uploads, rewrites books, adds devices and
-			// resets other accounts' passwords.
-			if self, err := store.SelfRegistered(user); err != nil || self {
-				logger.Info("self-registered account refused outside progress sync and the catalog",
+			// Only admin accounts get the UI, API and MCP, which upload,
+			// rewrite books, add devices and reset other accounts. A reader
+			// account (made for the e-reader, or registered by it through
+			// POST /users/create, which asks nobody) reads the catalog and
+			// syncs progress: its password is typed on the reader and may
+			// cross the internet through Funnel, so it must not open more.
+			if admin, err := store.IsAdmin(user); err != nil || !admin {
+				logger.Info("reader account refused outside progress sync and the catalog",
 					"username", user, "remote", kosync.ClientIP(r))
 				return "", false
 			}
@@ -587,7 +587,7 @@ func printServerBanner(addr net.Addr, storePath string, registration bool, catal
 		}
 	}
 
-	fmt.Printf("\nWeb UI: http://localhost:%s/ (an account from `shelf user add` signs in)\n", port)
+	fmt.Printf("\nWeb UI: http://localhost:%s/ (an admin account signs in: shelf user add --admin)\n", port)
 	fmt.Println("API: /v1 (described at /v1/openapi.json); MCP: /mcp. Both take the same account.")
 	fmt.Println("An account the reader registers itself is for progress sync and the catalog only.")
 	fmt.Println()

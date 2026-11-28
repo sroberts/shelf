@@ -104,7 +104,13 @@ shelf user ls --json
 shelf user add --generate x4                                  # prints a typeable password, once
 shelf user add --generate --url https://shelf.example.ts.net x4   # setup for a reader using Funnel
 shelf user passwd --generate x4                               # new password; positions are kept
+shelf user add --admin --generate me                          # an admin: also the web UI, API and MCP
+shelf user role x4 reader                                     # or: shelf user role me admin
 ```
+
+New accounts are reader accounts: the catalog and progress sync only. Only make
+an admin, or promote one, when the user asks; a reader's password is typed on
+the device and may cross the internet.
 
 The password is printed once and stored only as a hash: pass it on to the user
 right away. `shelf user rm` deletes the account's reading positions, so ask first.

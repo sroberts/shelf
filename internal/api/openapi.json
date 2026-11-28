@@ -2048,8 +2048,9 @@
       "Account": {
         "type": "object",
         "required": [
-          "name",
-          "books"
+          "admin",
+          "books",
+          "name"
         ],
         "properties": {
           "name": {
@@ -2065,6 +2066,10 @@
           "password": {
             "type": "string",
             "description": "only in the response that created or reset the account, and only when shelf generated it; never shown again"
+          },
+          "admin": {
+            "type": "boolean",
+            "description": "also allowed the web UI, API and MCP; set with `shelf user role`. New accounts are reader accounts: the catalog and progress sync."
           }
         }
       }

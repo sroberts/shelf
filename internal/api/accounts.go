@@ -25,9 +25,13 @@ type AccountStore interface {
 // created or reset it, when shelf generated it: it is never stored in the
 // clear and cannot be shown again.
 type Account struct {
-	Name     string `json:"name"`
-	Created  int64  `json:"created_unix,omitempty"`
-	Books    int    `json:"books"`
+	Name    string `json:"name"`
+	Created int64  `json:"created_unix,omitempty"`
+	Books   int    `json:"books"`
+	// Admin accounts may also use the web UI, API and MCP. Roles are set
+	// from the command line only (shelf user role), deliberately: granting
+	// that much access should take a step outside any one browser session.
+	Admin    bool   `json:"admin"`
 	Password string `json:"password,omitempty"`
 }
 
@@ -42,7 +46,7 @@ func (s *Service) Accounts() ([]Account, error) {
 	}
 	out := make([]Account, 0, len(users))
 	for _, u := range users {
-		out = append(out, Account{Name: u.Username, Created: u.CreatedAt, Books: u.Books})
+		out = append(out, Account{Name: u.Username, Created: u.CreatedAt, Books: u.Books, Admin: u.Admin})
 	}
 	return out, nil
 }

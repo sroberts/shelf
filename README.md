@@ -124,7 +124,7 @@ go build -o shelf ./cmd/shelf
 
 ### API and MCP
 
-The same server offers a JSON REST API under `/v1` and an MCP server at `/mcp`. Both take the same account as the catalog: HTTP Basic with a shelf account, or a signed-in Outpost user (see below). They're authenticated even with `--open-catalog`, because they can change the library. An account the reader registered itself, through kosync's open `/users/create`, is for progress sync and the catalog only; make one with `shelf user add` (or from the web UI) to sign in to the API, MCP and the web UI.
+The same server offers a JSON REST API under `/v1` and an MCP server at `/mcp`. Both take the same account as the catalog: HTTP Basic with a shelf account, or a signed-in Outpost user (see below). They're authenticated even with `--open-catalog`, because they can change the library. There are two kinds of account. A **reader account** opens only the catalog and progress sync: that's what the e-reader uses, what the web UI's Reader accounts section and `shelf user add` make, and what the reader gets if it registers itself. An **admin account** also opens the web UI, the API and MCP. Make one with `shelf user add --admin NAME`, or change a role with `shelf user role NAME admin|reader`. A reader's password is typed on the device and may cross the internet through Funnel, so keeping it to reader access means a leaked one can't upload, rewrite books or reset accounts. Under Outpost's gateway you sign in to the web UI through Outpost instead, and no admin account is needed. Accounts that existed before roles were added are admins.
 
 - **REST:** search books (`GET /v1/books?q=author:"le guin"`); fetch, download, or get the cover of one (`/v1/books/{id}`, `/file`, `/cover`); upload books (`POST /v1/books`) and edit their metadata (`PATCH /v1/books/{id}`); browse authors, series, tags and genres; create, delete and fill shelves; read and clear reading progress (`/v1/progress`); list and add readers (`/v1/devices`) and sync to them as jobs you poll (`POST /v1/devices/{name}/sync`, `/v1/jobs/{id}`); library stats; and `GET /v1/me`, which says who you are and which features this server has on. The full description is at `GET /v1/openapi.json`, which needs no login.
 - **MCP:** the Streamable HTTP transport at `/mcp`, with tools to search, read, and edit books (`search_books`, `get_book`, `update_book_metadata`, `list_values`), manage shelves (`list_shelves`, `get_shelf`, `create_shelf`, `delete_shelf`, `add_to_shelf`, `remove_from_shelf`), and check reading progress (`reading_progress`, `clear_reading_progress`). Further tools sync (`list_devices`, `add_device`, `sync_to_device`, `get_sync_job`, `cancel_sync_job`) and give `library_stats`. `sync_to_device` only plans unless it's called with `dry_run: false`, so an agent shows you the plan before anything is sent.
@@ -154,7 +154,7 @@ If Outpost gives shelf its models and mail, `shelf serve` also uses them. Both a
 To manage accounts or import books, run the CLI against the same storage directory:
 
 ```sh
-OUTPOST_STORAGE_DIR=~/.outpost/data/shelf shelf user add reader
+OUTPOST_STORAGE_DIR=~/.outpost/data/shelf shelf user add --generate x4
 OUTPOST_STORAGE_DIR=~/.outpost/data/shelf shelf import ~/Downloads/*.epub
 ```
 
@@ -191,7 +191,7 @@ shelf devices add NICK --host H         Add a Wi-Fi device to config.toml
 shelf progress [--user U] [--json]      Reading positions, most recent first
 shelf progress clear BOOK... [--yes]    Forget shelf's copy of a reading position
 shelf mail [--json]                     Mail import status
-shelf user add|ls|rm|passwd NAME        Manage reader accounts (--generate makes a password)
+shelf user add|ls|rm|passwd|role NAME   Manage accounts (--admin, --generate; role NAME admin|reader)
 shelf serve [--port N] [--scan]         Run the web UI, API, MCP, OPDS catalog and progress sync
 shelf skill show|install [--dir DIR]    Print or install the agent skill (SKILL.md)
 shelf sync [SHELF] [--dry-run]          Send a shelf to a device

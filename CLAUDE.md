@@ -299,6 +299,10 @@ keeps its shutdown at 8s, inside the 10s before SIGKILL.
   account, so a stranger cannot lock the owner's reader out. `ClientIP` believes `X-Forwarded-For` only
   from loopback. Generated passwords (`kosync.GeneratePassword`) are lowercase and grouped because
   they are typed on the reader; a chosen one must be 10 characters or more through the API.
+- **Reader accounts are not admins.** `progress.db` keeps an `admins` table: admin is a grant, so an
+  account made by an older shelf, by `/users/create`, or by the web UI's Reader accounts gets the
+  catalog and progress sync only. `shelf serve`'s Basic check for the UI, API and MCP requires
+  `IsAdmin`. Roles change only from the CLI (`shelf user role`), never from the web.
 - **The reader never passes the gateway.** It has no browser. Its paths are `public_paths` in
   `outpost.toml`, where the gateway strips all identity, so kosync and OPDS keep their own auth
   under Outpost. `Identify` only ever adds a way in. It never replaces Basic.

@@ -145,7 +145,49 @@ func (s *Store) ensureSelfRegistered() error {
 	if _, err := s.db.Exec(selfRegisteredSchema); err != nil {
 		return fmt.Errorf("kosync: create schema: %w", err)
 	}
-	return nil
+	return s.ensureAdmins()
+}
+
+// adminsSchema lists the accounts that may use the web UI, the API and MCP.
+//
+// Every other account is a reader account: the catalog and progress sync, and
+// nothing more. A reader account's password is typed on the e-reader, sent as
+// Basic auth to the catalog, and may face the internet through Funnel, so if
+// it leaks it must not also be able to upload, rewrite books, add devices or
+// reset other accounts. Admin is a grant rather than a restriction for the
+// same reason the self_registered table is a table: an older shelf that makes
+// an account leaves no row here, and that account gets less access, not more.
+const adminsSchema = `
+CREATE TABLE admins (
+  username TEXT PRIMARY KEY
+);
+`
+
+// ensureAdmins creates the admins table the first time a store is opened by a
+// shelf that has it. Accounts that existed before are made admins, except the
+// ones the reader registered itself: before roles, every operator-made account
+// could use the API, and taking that away on upgrade would lock the owner out.
+func (s *Store) ensureAdmins() error {
+	var exists int
+	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'admins'`).Scan(&exists); err != nil {
+		return fmt.Errorf("kosync: read schema: %w", err)
+	}
+	if exists > 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(adminsSchema); err != nil {
+		return fmt.Errorf("kosync: create schema: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO admins (username)
+		SELECT username FROM users WHERE username NOT IN (SELECT username FROM self_registered)`); err != nil {
+		return fmt.Errorf("kosync: grant existing accounts: %w", err)
+	}
+	return tx.Commit()
 }
 
 // Close releases the database.
@@ -166,17 +208,55 @@ func (s *Store) Path() string { return s.path }
 // and shelf does not get to raise it. What the salting buys is narrow and real:
 // the database file stops being a list of working credentials.
 
-// CreateUser adds an account the operator made: from the command line, the
-// API or the web UI. key is the MD5 the client sends.
+// CreateUser adds a reader account the operator made, from the command line,
+// the API or the web UI: the catalog and progress sync. key is the MD5 the
+// client sends.
 func (s *Store) CreateUser(username, key string) error {
-	return s.createUser(username, key, false)
+	return s.createUser(username, key, false, false)
+}
+
+// CreateAdmin adds an account that may also use the web UI, the API and MCP.
+func (s *Store) CreateAdmin(username, key string) error {
+	return s.createUser(username, key, false, true)
+}
+
+// IsAdmin reports whether an account may use the web UI, the API and MCP.
+func (s *Store) IsAdmin(username string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM admins WHERE username = ?`,
+		NormalizeUsername(username)).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("kosync: look up user: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SetAdmin grants or withdraws an account's admin access. Its password and
+// reading positions are unchanged.
+func (s *Store) SetAdmin(username string, admin bool) error {
+	username = NormalizeUsername(username)
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM users WHERE username = ?`, username).Scan(&n); err != nil {
+		return fmt.Errorf("kosync: look up user: %w", err)
+	}
+	if n == 0 {
+		return ErrNoSuchUser
+	}
+	q := `DELETE FROM admins WHERE username = ?`
+	if admin {
+		q = `INSERT OR REPLACE INTO admins (username) VALUES (?)`
+	}
+	if _, err := s.db.Exec(q, username); err != nil {
+		return fmt.Errorf("kosync: set role: %w", err)
+	}
+	return nil
 }
 
 // RegisterUser adds an account through the unauthenticated registration
 // endpoint. It works for progress sync and the catalog; SelfRegistered
 // reports it, so a caller can keep it out of anything more.
 func (s *Store) RegisterUser(username, key string) error {
-	return s.createUser(username, key, true)
+	return s.createUser(username, key, true, false)
 }
 
 // SelfRegistered reports whether an account was made by RegisterUser.
@@ -190,7 +270,7 @@ func (s *Store) SelfRegistered(username string) (bool, error) {
 	return n > 0, nil
 }
 
-func (s *Store) createUser(username, key string, registered bool) error {
+func (s *Store) createUser(username, key string, registered, admin bool) error {
 	username = NormalizeUsername(username)
 	if username == "" || key == "" {
 		return ErrEmptyRequest
@@ -227,6 +307,13 @@ func (s *Store) createUser(username, key string, registered bool) error {
 		mark = `INSERT OR REPLACE INTO self_registered (username) VALUES (?)`
 	}
 	if _, err := tx.Exec(mark, username); err != nil {
+		return fmt.Errorf("kosync: create user: %w", err)
+	}
+	role := `DELETE FROM admins WHERE username = ?`
+	if admin {
+		role = `INSERT OR REPLACE INTO admins (username) VALUES (?)`
+	}
+	if _, err := tx.Exec(role, username); err != nil {
 		return fmt.Errorf("kosync: create user: %w", err)
 	}
 	return tx.Commit()
@@ -340,6 +427,9 @@ func (s *Store) DeleteUser(username string) error {
 	if _, err := tx.Exec(`DELETE FROM self_registered WHERE username = ?`, username); err != nil {
 		return fmt.Errorf("kosync: delete user: %w", err)
 	}
+	if _, err := tx.Exec(`DELETE FROM admins WHERE username = ?`, username); err != nil {
+		return fmt.Errorf("kosync: delete user: %w", err)
+	}
 	return tx.Commit()
 }
 
@@ -348,12 +438,15 @@ type UserInfo struct {
 	Username  string
 	CreatedAt int64
 	Books     int
+	// Admin is true for an account that may use the web UI, API and MCP.
+	Admin bool
 }
 
 // UserList returns every account with how many books it has progress for.
 func (s *Store) UserList() ([]UserInfo, error) {
 	rows, err := s.db.Query(`
-SELECT u.username, u.created_at, (SELECT count(*) FROM progress p WHERE p.username = u.username)
+SELECT u.username, u.created_at, (SELECT count(*) FROM progress p WHERE p.username = u.username),
+       EXISTS (SELECT 1 FROM admins a WHERE a.username = u.username)
 FROM users u ORDER BY u.username`)
 	if err != nil {
 		return nil, fmt.Errorf("kosync: list users: %w", err)
@@ -363,7 +456,7 @@ FROM users u ORDER BY u.username`)
 	var out []UserInfo
 	for rows.Next() {
 		var u UserInfo
-		if err := rows.Scan(&u.Username, &u.CreatedAt, &u.Books); err != nil {
+		if err := rows.Scan(&u.Username, &u.CreatedAt, &u.Books, &u.Admin); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

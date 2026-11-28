@@ -64,6 +64,10 @@ back the other way; the device is a dumb, path-stable target.
 - `internal/api` — the REST API under `/v1`, its OpenAPI document, and the MCP server at `/mcp`,
   both thin layers over one `Service`. `TestOpenAPIMatchesRoutes` fails if `openapi.json` and the
   route table disagree. Add a route to both, or the test tells you which one you forgot.
+- `internal/ui` — the built web UI (`web/`, Svelte + Vite) embedded with `go:embed`, served at `/`
+  with client-side routing. Without a build it serves a "UI not built" page; nothing else depends on it.
+- `internal/syncrun` — one whole sync (open, list, prepare, plan, execute, save the manifest) for
+  callers that are not a terminal. `shelf serve` runs it as jobs for the web UI and MCP.
 - `internal/ai` — the operator's AI models through Outpost (spec §15): a client, the genre
   classifier, and `ai.db`.
 - `internal/mailbox` — mail through Outpost (spec §16): newsletters become EPUBs in the library.
@@ -99,7 +103,9 @@ The device is an ESP32-C3 with ~380 KB usable RAM on Wi-Fi, and its API has real
 
 - **No mtime, no checksum** in `/api/files`. Change detection is size-based, deliberately. Do not
   build anything that assumes otherwise — there is a test asserting the fields stay absent.
-- **A missing directory returns `200 []`, not `404`.** Stat the parent to test existence.
+- **A missing directory returns `200 []`, not `404`** (1.4.1), **or `500 "Directory listing failed"`** (1.6.1),
+  the same words a card that will not read produces. Stat the parent to test existence; `Client.List`
+  does exactly that before calling a folder missing.
 - **No resume.** The device deletes a partial file on disconnect, so a retry restarts at byte zero.
 - **Dotfiles are hidden** from listings, which is why shelf's own state lives in a visible `/shelf/`.
 - **`GET /api/settings` crashes firmware 1.4.1** and leaves the SD card unmounted. Nothing calls it;
@@ -127,6 +133,30 @@ earlier west of Greenwich and the frames would only pass on the machine that wro
 detail panel also defaults to `GraphicsNone`; cover art is opted into by the root model after
 terminal detection, so a CI terminal that happens to support sixel cannot inject escape sequences
 into a frame.
+
+### Four interfaces, one library
+
+shelf is driven four ways: the CLI (for scripts and agents, with `--json`), the TUI (for people at a
+terminal), the web UI and MCP (both through `shelf serve`). A capability added to one is added to
+all four, or the gap is written down. The web UI is a client of `/v1` with **no private endpoints**,
+so REST, MCP and the UI cannot drift apart. The UI's contract is `openapi.json`.
+
+- **Nothing remote repaths.** `syncrun` never sets `Options.Repath`, and the API refuses the field.
+  Moving pinned books is CLI-only, behind `--repath` and its list of reading positions lost.
+- **Remote syncs are jobs**, one per device at a time, run on the server's background context and
+  waited for on shutdown. A request never holds a sync open, because a first sync of a large
+  library takes far longer than any proxy waits.
+- **MCP `sync_to_device` defaults to `dry_run`.** An agent's first call can only plan.
+- **Uploads stream to `cache/uploads`** and are moved into the library by the naming template, like
+  `shelf import --move`. A file whose hash is already indexed is refused, not added beside it.
+- **Metadata edits never move a file**, and carry the book's AI genre to its new hash.
+- **Only `shelf serve` writes `ai.db`.** The CLI and TUI read it if it exists and never create it.
+- **`cmd/shelf/skill/SKILL.md` is embedded** and is what `shelf skill install` gives agents. Change
+  it whenever a command or flag changes.
+- TUI book actions are overlays in `internal/tui/actions.go` that capture every key and do their
+  work in a `tea.Cmd`. Tests that open a text input use `settle`, not `runCmd`: the cursor blink
+  is a command that never returns.
+- Known gaps: the TUI cannot delete a shelf or choose `--prune` per sync (it follows config).
 
 ## Conventions
 
@@ -264,6 +294,11 @@ keeps its shutdown at 8s, inside the 10s before SIGKILL.
 - **Only the signed `X-Outpost-Identity` is trusted, never `X-Outpost-User`.** Any process on the
   machine can reach the loopback port and set the plain header. The catalog serves the whole
   library, which is exactly what a neighbour must not get by claiming a name.
+- **Reader paths may be on the internet.** Under Funnel the public paths answer anyone. Password checks
+  for the catalog, kosync and the API share one `kosync.Limiter`, keyed by client address, never by
+  account, so a stranger cannot lock the owner's reader out. `ClientIP` believes `X-Forwarded-For` only
+  from loopback. Generated passwords (`kosync.GeneratePassword`) are lowercase and grouped because
+  they are typed on the reader; a chosen one must be 10 characters or more through the API.
 - **The reader never passes the gateway.** It has no browser. Its paths are `public_paths` in
   `outpost.toml`, where the gateway strips all identity, so kosync and OPDS keep their own auth
   under Outpost. `Identify` only ever adds a way in. It never replaces Basic.

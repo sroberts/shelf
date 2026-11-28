@@ -102,12 +102,32 @@ shelf serve
 - Additional server flags: `--open-catalog` disables OPDS password authentication, `--no-opds` disables the catalog endpoint, `--scan` re-indexes the library in the background at startup, and `--port N` listens on `127.0.0.1:N` only (for running behind a proxy; use `--listen` for the LAN).
 - `GET /up` is an unauthenticated healthcheck that answers `200 ok` while the server is running.
 
+### Web UI
+
+`shelf serve` also serves a web UI at `/`. Open the server's address in a browser and sign in with a shelf account; under Outpost's login gateway you're already signed in. From it you can:
+
+- browse and search the library by author, series, tag, format and genre, and download books;
+- drag files onto the page to add them to the library (EPUB, PDF, TXT and XTC, up to 512 MiB per upload), placed by the naming template just like `shelf import`;
+- edit an EPUB's title, authors, series, tags and description. The change is written into the file, which stays where it is, so the book keeps its place on the reader;
+- create and delete shelves, either saved searches or hand-picked, and add or remove books on hand-picked ones;
+- see what you're reading: how far each book has got, on which device, and when. You can also clear a stale position;
+- add a Wi-Fi reader, preview a sync, run it and watch its progress. Books already on the reader never move, and moving them (`--repath`) stays CLI-only, because it costs their reading positions.
+
+It installs as an app on a phone (it's a PWA), and is a client of the same `/v1` API as everything else, with no private endpoints.
+
+The UI is built with Svelte and Vite and embedded in the binary. Release builds include it. When building from source, build the UI first, or the binary serves a page saying it isn't built (the API, MCP and catalog work either way):
+
+```sh
+cd web && npm ci && npm run build && cd ..
+go build -o shelf ./cmd/shelf
+```
+
 ### API and MCP
 
-The same server offers a JSON REST API under `/v1` and an MCP server at `/mcp`. Both take the same account as the catalog: HTTP Basic with a shelf account, or a signed-in Outpost user (see below). They're authenticated even with `--open-catalog`, because they can edit shelves.
+The same server offers a JSON REST API under `/v1` and an MCP server at `/mcp`. Both take the same account as the catalog: HTTP Basic with a shelf account, or a signed-in Outpost user (see below). They're authenticated even with `--open-catalog`, because they can change the library.
 
-- **REST:** search books (`GET /v1/books?q=author:"le guin"`), fetch or download one (`/v1/books/{id}`, `/v1/books/{id}/file`), browse authors, series, tags and genres, list shelves and add or remove books on manual ones, library stats, and reading progress (`/v1/progress`). The full description is at `GET /v1/openapi.json`, which needs no login.
-- **MCP:** the Streamable HTTP transport at `/mcp`, with tools `search_books`, `get_book`, `list_values`, `list_shelves`, `get_shelf`, `add_to_shelf`, `remove_from_shelf`, `library_stats` and `reading_progress`.
+- **REST:** search books (`GET /v1/books?q=author:"le guin"`); fetch, download, or get the cover of one (`/v1/books/{id}`, `/file`, `/cover`); upload books (`POST /v1/books`) and edit their metadata (`PATCH /v1/books/{id}`); browse authors, series, tags and genres; create, delete and fill shelves; read and clear reading progress (`/v1/progress`); list and add readers (`/v1/devices`) and sync to them as jobs you poll (`POST /v1/devices/{name}/sync`, `/v1/jobs/{id}`); library stats; and `GET /v1/me`, which says who you are and which features this server has on. The full description is at `GET /v1/openapi.json`, which needs no login.
+- **MCP:** the Streamable HTTP transport at `/mcp`, with tools to search, read, and edit books (`search_books`, `get_book`, `update_book_metadata`, `list_values`), manage shelves (`list_shelves`, `get_shelf`, `create_shelf`, `delete_shelf`, `add_to_shelf`, `remove_from_shelf`), and check reading progress (`reading_progress`, `clear_reading_progress`). Further tools sync (`list_devices`, `add_device`, `sync_to_device`, `get_sync_job`, `cancel_sync_job`) and give `library_stats`. `sync_to_device` only plans unless it's called with `dry_run: false`, so an agent shows you the plan before anything is sent.
 
 Shelf edits made through either one are written to `shelves.toml`. If that write fails, the edit is undone.
 
@@ -138,14 +158,28 @@ OUTPOST_STORAGE_DIR=~/.outpost/data/shelf shelf user add reader
 OUTPOST_STORAGE_DIR=~/.outpost/data/shelf shelf import ~/Downloads/*.epub
 ```
 
-**With the login gateway on** (`OUTPOST_AUTH=gateway`), a browser that has signed in to Outpost can open the catalog without a second password. shelf verifies the signed `X-Outpost-Identity` token against `OUTPOST_JWKS_URL`, and never trusts the plain `X-Outpost-User` header. The reader can't sign in to the gateway, so `outpost.toml` suggests the paths it uses (`/opds`, `/opds/*`, `/users/auth`, `/syncs/progress`, `/syncs/progress/*`) as `public_paths`. shelf authenticates each of those requests itself with your shelf account. Account creation (`/users/create`) is left behind the gateway, so create accounts with `shelf user add`. The reader also needs a network route to shelf's tailnet address, which an ESP32 can't join by itself. Getting it there, for example with a subnet router or Funnel, is up to you as the operator.
+**With the login gateway on** (`OUTPOST_AUTH=gateway`), a browser that has signed in to Outpost can open the catalog without a second password. shelf verifies the signed `X-Outpost-Identity` token against `OUTPOST_JWKS_URL`, and never trusts the plain `X-Outpost-User` header. The reader can't sign in to the gateway, so `outpost.toml` suggests the paths it uses (`/opds`, `/opds/*`, `/users/auth`, `/syncs/progress`, `/syncs/progress/*`) as `public_paths`. shelf authenticates each of those requests itself with your shelf account. Account creation (`/users/create`) is left behind the gateway, so create accounts from the web UI or with `shelf user add` (see below). The reader also needs a network route to shelf's tailnet address, which an ESP32 can't join by itself.
+
+### Reading away from home (Tailscale Funnel)
+
+The reader can't join a tailnet, so outside your home network it reaches shelf through Tailscale Funnel. Under Outpost, turn on Internet access for shelf. That puts only the reader's paths (`/opds`, `/opds/*`, `/users/auth`, `/syncs/progress`, `/syncs/progress/*`) on the internet, at shelf's own `https://<node>.<tailnet>.ts.net` address. The reader's firmware speaks HTTPS, so the Funnel address works for both the catalog and progress sync.
+
+Give the reader an account made for this. On the **Readers** page of the web UI, **Reader accounts → New account** creates one with a generated password. Then it shows everything to enter on the reader, once: the OPDS server, the sync server, the username and the password. From a terminal:
+
+```sh
+shelf user add --generate --url https://shelf.example.ts.net x4
+```
+
+Generated passwords are four groups of four lowercase letters and digits, such as `k7mq-2xrf-n4dp-9vht`. That's easy to type on the reader's keyboard, and too strong (80 bits) to guess over the internet. A password you choose yourself must be at least 10 characters when it's set through the web UI or the API. Because these paths are public, shelf refuses an address after 10 wrong passwords in 15 minutes. It counts by address, not by account, so someone guessing can't lock your own reader out. shelf stores only a salted hash, so a lost password is reset, not recovered.
 
 ## Commands
 
 ```
 shelf scan [--deep] [--covers]          Index the library directory
-shelf ls [QUERY] [--json] [--sort KEY]  List and search books
+shelf ls [QUERY] [--json] [--sort KEY]  List and search books (--genre G to filter)
 shelf tags [--json]                     List tags with book counts
+shelf genres [--json]                   List AI-assigned genres with book counts
+shelf stats [--json]                    Library totals
 shelf meta BOOK [--set FIELD=VALUE]     Show or edit book metadata in place
 shelf rm BOOK... [--yes] [--dry-run]    Delete books from the index and disk
 shelf import FILE... [--move|--link]    Add files to the library
@@ -153,8 +187,13 @@ shelf convert FILE... [--out DIR]       Convert PDF or TXT to EPUB
 shelf optimize FILE... --profile NAME   Rebuild an EPUB for a device panel
 shelf shelf create|ls|rm|show|add       Manage named shelves
 shelf devices [--discover]              Find and inspect devices
-shelf user add|ls|rm|passwd NAME        Manage sync and catalog accounts
-shelf serve [--port N] [--scan]         Run progress sync, OPDS catalog, API and MCP
+shelf devices add NICK --host H         Add a Wi-Fi device to config.toml
+shelf progress [--user U] [--json]      Reading positions, most recent first
+shelf progress clear BOOK... [--yes]    Forget shelf's copy of a reading position
+shelf mail [--json]                     Mail import status
+shelf user add|ls|rm|passwd NAME        Manage reader accounts (--generate makes a password)
+shelf serve [--port N] [--scan]         Run the web UI, API, MCP, OPDS catalog and progress sync
+shelf skill show|install [--dir DIR]    Print or install the agent skill (SKILL.md)
 shelf sync [SHELF] [--dry-run]          Send a shelf to a device
 shelf push FILE... --to /Books          Upload directly to a device path
 shelf pull PATH... [--out DIR]          Download files from a device
@@ -167,6 +206,15 @@ shelf --no-tui                          Force CLI mode (headless)
 index id written as `id:42`. `shelf meta` and `shelf ls --json` show each book's id. Ids are
 renumbered whenever the index is rebuilt, so look one up just before using it. A bare number
 is treated as a search term, never as an id.
+
+Clearing a reading position only clears shelf's copy. The reader keeps its own and sends it
+again the next time the book is open with sync on.
+
+`shelf skill install` writes `~/.claude/skills/shelf/SKILL.md`, which teaches an agent such as
+Claude Code how to drive shelf's CLI. It won't overwrite an edited copy without `--force`.
+
+In the TUI, the book under the cursor takes `e` (edit metadata), `+` / `-` (add to or remove from
+a shelf), `x` (clear its reading position), `d` (delete), and `I` imports a file. `?` lists every key.
 
 ### Search Syntax
 

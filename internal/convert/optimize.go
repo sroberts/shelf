@@ -149,6 +149,10 @@ func optimizeImage(body []byte, format string, p Profile) ([]byte, error) {
 // sniffing. A mismatch is reported, not silently corrected, because writing
 // PNG bytes back into a file the OPF calls a JPEG would break the manifest.
 func decodeImage(body []byte, format string) (image.Image, error) {
+	// The header first: a small file can still decode to gigabytes.
+	if err := epub.CheckImageSize(body); err != nil {
+		return nil, err
+	}
 	r := bytes.NewReader(body)
 	switch format {
 	case "png":

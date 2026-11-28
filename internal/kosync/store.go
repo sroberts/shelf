@@ -100,7 +100,7 @@ func (s *Store) init() error {
 	}
 	switch {
 	case version == storeSchemaVersion:
-		return nil
+		return s.ensureSelfRegistered()
 	case version != 0:
 		// Refuse rather than guess. This database holds the only copy of your
 		// reading positions, so a wrong migration is not recoverable by
@@ -120,7 +120,32 @@ func (s *Store) init() error {
 	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, storeSchemaVersion)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.ensureSelfRegistered()
+}
+
+// selfRegisteredSchema lists the accounts made through POST /users/create.
+//
+// That endpoint takes no credentials, so anyone who can reach it can make an
+// account; such an account is good for progress sync and the catalog, which is
+// all registration ever offered, and nothing more. Kept in a table of its own,
+// created if missing, rather than as a column under a new schema version: an
+// older shelf opening this store then neither refuses it nor needs to know.
+// An older shelf deleting a user leaves its row behind, and a later account of
+// that name inherits less access, never more.
+const selfRegisteredSchema = `
+CREATE TABLE IF NOT EXISTS self_registered (
+  username TEXT PRIMARY KEY
+);
+`
+
+func (s *Store) ensureSelfRegistered() error {
+	if _, err := s.db.Exec(selfRegisteredSchema); err != nil {
+		return fmt.Errorf("kosync: create schema: %w", err)
+	}
+	return nil
 }
 
 // Close releases the database.
@@ -141,8 +166,31 @@ func (s *Store) Path() string { return s.path }
 // and shelf does not get to raise it. What the salting buys is narrow and real:
 // the database file stops being a list of working credentials.
 
-// CreateUser registers a user. key is the MD5 the client sends.
+// CreateUser adds an account the operator made: from the command line, the
+// API or the web UI. key is the MD5 the client sends.
 func (s *Store) CreateUser(username, key string) error {
+	return s.createUser(username, key, false)
+}
+
+// RegisterUser adds an account through the unauthenticated registration
+// endpoint. It works for progress sync and the catalog; SelfRegistered
+// reports it, so a caller can keep it out of anything more.
+func (s *Store) RegisterUser(username, key string) error {
+	return s.createUser(username, key, true)
+}
+
+// SelfRegistered reports whether an account was made by RegisterUser.
+func (s *Store) SelfRegistered(username string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM self_registered WHERE username = ?`,
+		NormalizeUsername(username)).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("kosync: look up user: %w", err)
+	}
+	return n > 0, nil
+}
+
+func (s *Store) createUser(username, key string, registered bool) error {
 	username = NormalizeUsername(username)
 	if username == "" || key == "" {
 		return ErrEmptyRequest
@@ -154,7 +202,13 @@ func (s *Store) CreateUser(username, key string) error {
 	}
 	saltHex := hex.EncodeToString(salt)
 
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
 		`INSERT INTO users (username, salt, key_hash, created_at) VALUES (?,?,?,?)`,
 		username, saltHex, hashKey(saltHex, key), time.Now().Unix())
 	if err != nil {
@@ -165,7 +219,17 @@ func (s *Store) CreateUser(username, key string) error {
 		}
 		return fmt.Errorf("kosync: create user: %w", err)
 	}
-	return nil
+	// Cleared for an operator's account in case an older shelf left a stale
+	// row for a user of this name; the same transaction, so the account never
+	// exists for a moment with the wrong access.
+	mark := `DELETE FROM self_registered WHERE username = ?`
+	if registered {
+		mark = `INSERT OR REPLACE INTO self_registered (username) VALUES (?)`
+	}
+	if _, err := tx.Exec(mark, username); err != nil {
+		return fmt.Errorf("kosync: create user: %w", err)
+	}
+	return tx.Commit()
 }
 
 // Authenticate verifies a username and auth key.
@@ -272,6 +336,9 @@ func (s *Store) DeleteUser(username string) error {
 	}
 	if _, err := tx.Exec(`DELETE FROM progress WHERE username = ?`, username); err != nil {
 		return fmt.Errorf("kosync: delete progress: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM self_registered WHERE username = ?`, username); err != nil {
+		return fmt.Errorf("kosync: delete user: %w", err)
 	}
 	return tx.Commit()
 }

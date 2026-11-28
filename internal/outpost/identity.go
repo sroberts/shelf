@@ -37,6 +37,7 @@ var (
 	ErrExpired       = errors.New("identity token expired")
 	ErrIssuer        = errors.New("identity token issuer mismatch")
 	ErrAudience      = errors.New("identity token audience mismatch")
+	ErrService       = errors.New("identity token is for another service")
 	ErrNoSubject     = errors.New("identity token has no subject")
 	ErrUnknownKey    = errors.New("identity token signed by an unknown key")
 	errNotConfigured = errors.New("identity verification is not configured")
@@ -54,6 +55,12 @@ var (
 type Verifier struct {
 	Issuer  string
 	JWKSURL string
+	// Service, when set, must equal the token's svc claim. The gateway signs
+	// every app's tokens with the same keys, and aud is checked against Host
+	// and X-Forwarded-Host, which a neighbour connecting to the loopback port
+	// directly writes itself. So aud alone lets another app replay a token
+	// the gateway minted for it here; svc is what it cannot change (spec §3).
+	Service string
 	Client  *http.Client
 
 	// Leeway absorbs clock skew between the gateway and this process. The
@@ -81,6 +88,7 @@ func NewVerifier(e Env) *Verifier {
 	return &Verifier{
 		Issuer:  e.Issuer,
 		JWKSURL: e.JWKSURL,
+		Service: e.Service,
 		Client:  &http.Client{Timeout: 5 * time.Second},
 		Leeway:  5 * time.Second,
 	}
@@ -121,6 +129,7 @@ type jwtHeader struct {
 
 type jwtClaims struct {
 	Iss    string          `json:"iss"`
+	Svc    string          `json:"svc"`
 	Sub    string          `json:"sub"`
 	Aud    json.RawMessage `json:"aud"`
 	Exp    *float64        `json:"exp"`
@@ -182,6 +191,11 @@ func (v *Verifier) Verify(ctx context.Context, token string, audiences []string)
 	}
 	if c.Iss != v.Issuer {
 		return Identity{}, ErrIssuer
+	}
+	// A token without svc is refused too, once this process knows its name:
+	// a gateway new enough to set OUTPOST_SERVICE always mints one.
+	if v.Service != "" && c.Svc != v.Service {
+		return Identity{}, ErrService
 	}
 	if !audienceMatches(c.Aud, audiences) {
 		return Identity{}, ErrAudience

@@ -73,6 +73,14 @@ func newHandler(dist fs.FS, log *slog.Logger) http.Handler {
 	fileServer := http.FileServerFS(dist)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The page is never framed. A frame on someone else's site is a
+		// same-origin page to shelf, so the Origin check on writes would
+		// pass every click a hidden frame tricked out of the user: "Delete
+		// account", "Send to reader". nosniff because covers and downloads
+		// come from the same origin and must not be read as script.
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

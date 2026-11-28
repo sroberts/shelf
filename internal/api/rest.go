@@ -122,6 +122,9 @@ var routes = []route{
 func (s *Server) Mount(mux *http.ServeMux) {
 	for _, rt := range routes {
 		mux.HandleFunc(rt.method+" "+rt.pattern, func(w http.ResponseWriter, r *http.Request) {
+			// Book files and covers are served from the UI's own origin;
+			// a browser must take their declared type, not guess script.
+			w.Header().Set("X-Content-Type-Options", "nosniff")
 			user, ok := s.authenticate(w, r, rt.public)
 			if !ok {
 				return

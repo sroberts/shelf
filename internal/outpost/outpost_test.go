@@ -89,7 +89,7 @@ func newGateway(t *testing.T) *testGateway {
 }
 
 func (g *testGateway) verifier() *Verifier {
-	return NewVerifier(Env{Gateway: true, Issuer: testIssuer, JWKSURL: g.srv.URL})
+	return NewVerifier(Env{Gateway: true, Issuer: testIssuer, JWKSURL: g.srv.URL, Service: "shelf"})
 }
 
 func (g *testGateway) sign(header, claims map[string]any) string {
@@ -108,7 +108,7 @@ func (g *testGateway) sign(header, claims map[string]any) string {
 func (g *testGateway) token(mod func(h, c map[string]any)) string {
 	h := map[string]any{"alg": "EdDSA", "typ": "JWT", "kid": g.kid}
 	c := map[string]any{
-		"iss": testIssuer, "aud": "shelf.tailnet.ts.net", "sub": "ann",
+		"iss": testIssuer, "svc": "shelf", "aud": "shelf.tailnet.ts.net", "sub": "ann",
 		"name": "Ann", "email": "ann@example.com", "groups": []string{"admins"},
 		"iat": time.Now().Unix(), "exp": time.Now().Add(60 * time.Second).Unix(),
 	}
@@ -160,6 +160,12 @@ func TestVerifyRejects(t *testing.T) {
 		// A token minted for another app behind the same gateway must not
 		// open this one: that is what aud is for.
 		{"other app's audience", g.token(func(_, c map[string]any) { c["aud"] = "yarr.tailnet.ts.net" }), ErrAudience},
+		// The neighbour's own token, replayed at the loopback port with its
+		// own host in Host: aud matches what it wrote, svc does not.
+		{"other app's token, its host claimed", g.token(func(_, c map[string]any) {
+			c["svc"] = "yarr"
+		}), ErrService},
+		{"no svc", g.token(func(_, c map[string]any) { delete(c, "svc") }), ErrService},
 		{"no subject", g.token(func(_, c map[string]any) { c["sub"] = "" }), ErrNoSubject},
 		{"tampered claims", tamper(g.token(nil)), ErrSignature},
 		{"signed by another key", func() string {

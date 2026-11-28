@@ -185,7 +185,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	// The registration endpoint receives a plaintext password; the sync
 	// endpoints receive its MD5. Both reduce to the same stored verifier.
-	err := s.store.CreateUser(username, PasswordKey(body.Password))
+	err := s.store.RegisterUser(username, PasswordKey(body.Password))
 	switch {
 	case errors.Is(err, ErrUserExists):
 		// 402 is what kosync uses for "username taken". Odd, but clients

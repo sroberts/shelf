@@ -219,6 +219,18 @@ func TestValidate(t *testing.T) {
 			wantErr: "duplicate device nickname",
 		},
 		{
+			// The nickname names a file in the state directory; the API
+			// writes it from a request body.
+			name:    "nickname that climbs out of the state directory",
+			toml:    "[[device]]\nnickname='../../.ssh/x4'",
+			wantErr: "nickname must not contain a slash",
+		},
+		{
+			name:    "nickname with a backslash",
+			toml:    "[[device]]\nnickname='..\\\\x4'",
+			wantErr: "nickname must not contain a slash",
+		},
+		{
 			name:    "sd transport without mount",
 			toml:    "[[device]]\nnickname='sd'\ntransport='sd'",
 			wantErr: "requires mount",

@@ -112,7 +112,16 @@ export function upload(files, onProgress) {
       } catch {
         // not JSON: a proxy's error page, or the gateway's
       }
-      if (xhr.status === 401) {
+      // XHR follows redirects and cannot be told not to, so an expired gateway
+      // session lands on the sign-in page with a 200. Without this check that
+      // page would resolve as an upload that imported nothing.
+      let redirected = false;
+      try {
+        redirected = Boolean(xhr.responseURL) && new URL(xhr.responseURL).pathname !== '/v1/books';
+      } catch {
+        // an unparsable responseURL is treated as no redirect
+      }
+      if (xhr.status === 401 || redirected) {
         signedOut();
         reject(new ApiError(401, null, 'Your sign-in has ended. Sign in again to carry on.'));
       } else if (xhr.status >= 200 && xhr.status < 300) {

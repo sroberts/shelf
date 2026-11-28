@@ -95,7 +95,11 @@
 
   // Load the next page as the end of the list comes into view.
   $effect(() => {
-    if (!sentinel) return;
+    // Reading more and loading here makes the observer start afresh after each
+    // page. A new observer reports at once whether the sentinel is in view,
+    // so a page too short to push it out of view still loads the next one;
+    // a single long-lived observer only reports changes, and would stall.
+    if (!sentinel || !more || loading) return;
     const io = new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting) && more && !loading) load(false);
     }, { rootMargin: '600px' });
@@ -160,6 +164,9 @@
     addEventListener('dragover', over);
     addEventListener('drop', drop);
     return () => {
+      // A search typed just before leaving would otherwise fire after, and
+      // navigate back to the library from wherever the person went.
+      clearTimeout(timer);
       removeEventListener('dragenter', enter);
       removeEventListener('dragleave', leave);
       removeEventListener('dragover', over);

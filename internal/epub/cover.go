@@ -2,6 +2,7 @@ package epub
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"path"
@@ -23,6 +24,30 @@ const DefaultThumbnailWidth = 256
 
 // Cover images larger than this are almost certainly not cover images.
 const maxCoverSize = 64 << 20
+
+// MaxImagePixels bounds the images shelf decodes. The byte limits bound what
+// is read, not what it decodes to: a PNG of one flat colour at 60000x60000
+// compresses to a few hundred kilobytes and decodes to 14 GB. Books arrive by
+// upload and by mail, so one crafted file must not be able to take the
+// process down. Fifty megapixels is past any real cover or illustration.
+const MaxImagePixels = 50_000_000
+
+// ErrImageTooLarge is an image whose dimensions exceed MaxImagePixels.
+var ErrImageTooLarge = errors.New("epub: image dimensions too large to decode")
+
+// CheckImageSize reads only an image's header and refuses one that would
+// decode past MaxImagePixels. An image whose header does not parse is left
+// for the decoder to report.
+func CheckImageSize(data []byte) error {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > MaxImagePixels {
+		return fmt.Errorf("%w: %dx%d", ErrImageTooLarge, cfg.Width, cfg.Height)
+	}
+	return nil
+}
 
 // CoverPath returns the archive-relative path of the cover image.
 //
@@ -71,6 +96,9 @@ func (f *File) CoverImage() (image.Image, error) {
 		return nil, fmt.Errorf("%w: declared cover %s is missing", ErrNoCover, p)
 	}
 
+	if err := CheckImageSize(data); err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", ErrNoCover, p, err)
+	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("%w: decode %s: %v", ErrNoCover, p, err)

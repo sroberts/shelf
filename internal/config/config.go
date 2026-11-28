@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 )
@@ -254,6 +255,12 @@ func (c *Config) Validate() error {
 
 		if d.Nickname == "" {
 			return fmt.Errorf("%s: nickname is required", where)
+		}
+		// The nickname names the device's manifest file on disk
+		// (Paths.DeviceStateFile), and the API takes it from a request
+		// body, so a separator would put that file anywhere.
+		if strings.ContainsAny(d.Nickname, `/\`) || strings.ContainsFunc(d.Nickname, unicode.IsControl) {
+			return fmt.Errorf("%s: nickname must not contain a slash, a backslash or a control character", where)
 		}
 		if seen[d.Nickname] {
 			return fmt.Errorf("duplicate device nickname %q", d.Nickname)

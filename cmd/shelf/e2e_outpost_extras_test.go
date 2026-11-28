@@ -100,13 +100,38 @@ func TestE2EServeOutpostExtras(t *testing.T) {
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 	waitHealthy(t, base+"/up")
 
-	// An account, the way the reader makes one.
+	// An account the operator made, which signs in everywhere.
+	if _, stderr, code := runShelfWithEnvOnly(t, cmd.Env, "user", "add", "--password", "pw", "reader"); code != 0 {
+		t.Fatalf("user add: %s", stderr)
+	}
+
+	// One the reader registered itself, through an endpoint that asks
+	// nobody: progress sync and the catalog, but not the API, MCP or UI.
 	resp, err := http.Post(base+"/users/create", "application/json",
-		strings.NewReader(`{"username":"reader","password":"pw"}`))
+		strings.NewReader(`{"username":"stranger","password":"pw"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	for _, path := range []string{"/v1/books", "/v1/accounts", "/"} {
+		req, _ := http.NewRequest("GET", base+path, nil)
+		req.SetBasicAuth("stranger", "pw")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("self-registered account on %s: %d, want 401", path, resp.StatusCode)
+		}
+	}
+	req, _ := http.NewRequest("GET", base+"/opds", nil)
+	req.SetBasicAuth("stranger", "pw")
+	if resp, err := http.DefaultClient.Do(req); err != nil {
+		t.Fatal(err)
+	} else if resp.Body.Close(); resp.StatusCode != http.StatusOK {
+		t.Errorf("self-registered account on /opds: %d, want 200", resp.StatusCode)
+	}
 
 	// The OpenAPI document is public; the API itself is not.
 	if code := get(t, base+"/v1/openapi.json", false, nil); code != 200 {
@@ -151,7 +176,7 @@ func TestE2EServeOutpostExtras(t *testing.T) {
 
 	// The same book through MCP.
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_books","arguments":{"genre":"science-fiction"}}}`
-	req, _ := http.NewRequest("POST", base+"/mcp", strings.NewReader(body))
+	req, _ = http.NewRequest("POST", base+"/mcp", strings.NewReader(body))
 	req.SetBasicAuth("reader", "pw")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")

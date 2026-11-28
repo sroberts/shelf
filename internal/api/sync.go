@@ -126,7 +126,7 @@ func (ss *SyncService) AddDevice(name, host, root string) (*Device, error) {
 	if name == "" || host == "" {
 		return nil, badRequest("give the reader a name and an address")
 	}
-	if strings.ContainsAny(host, "/ ") {
+	if !plainHost(host) {
 		return nil, badRequest("the address is a name or IP address, such as 192.168.1.40, not a web address")
 	}
 	if root != "" && !strings.HasPrefix(root, "/") {
@@ -163,6 +163,22 @@ func (ss *SyncService) AddDevice(name, host, root string) (*Device, error) {
 	def, _ := updated.DeviceByName("")
 	out := ss.describe(&updated, d, def.Nickname == name)
 	return &out, nil
+}
+
+// plainHost reports whether host is only a name or address with an optional
+// port. The client builds its URLs by pasting the host in, so an "@", "?" or
+// "#" would quietly send the sync, and the library with it, somewhere other
+// than the address the operator was shown.
+func plainHost(host string) bool {
+	for _, r := range host {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune(".-_:[]%", r):
+		default:
+			return false
+		}
+	}
+	return host != ""
 }
 
 // SyncRequest starts a job.

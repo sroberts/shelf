@@ -2,6 +2,7 @@ package kosync
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -297,5 +298,91 @@ func TestLimiterRefusesAnAddressNotAnAccount(t *testing.T) {
 	now = now.Add(l.Window + time.Second)
 	if !l.Allowed(attacker) {
 		t.Error("still refused after the window")
+	}
+}
+
+// A sender behind the proxy cannot choose the address it is counted as by
+// writing its own X-Forwarded-For: the proxy appends the real one, and that
+// is the one taken.
+func TestLimiterCannotBeDodged(t *testing.T) {
+	l := NewLimiter()
+	guess := func(fwd ...string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = "127.0.0.1:5000"
+		for _, f := range fwd {
+			r.Header.Add("X-Forwarded-For", f)
+		}
+		return r
+	}
+	for i := range l.Max {
+		// A fresh made-up address each time, then what Funnel saw, then
+		// the gateway's own loopback hop.
+		r := guess(fmt.Sprintf("10.0.0.%d, 203.0.113.9", i), "127.0.0.1")
+		if !l.Allowed(r) {
+			t.Fatalf("refused after %d guesses", i)
+		}
+		l.Failed(r)
+	}
+	if l.Allowed(guess("10.9.9.9, 203.0.113.9")) {
+		t.Error("a forged first X-Forwarded-For entry reset the count")
+	}
+
+	// A right password with the guesser's own account forgives nothing.
+	l.Succeeded(guess("203.0.113.9"))
+	if l.Allowed(guess("203.0.113.9")) {
+		t.Error("signing in with one account cleared the guesses at others")
+	}
+
+	// Addresses in one IPv6 /64 are one client.
+	for i := range l.Max {
+		l.Failed(guess(fmt.Sprintf("2001:db8:1:2::%x", i+1)))
+	}
+	if l.Allowed(guess("2001:db8:1:2:ffff::1")) {
+		t.Error("another address in the same /64 was a new client")
+	}
+	if !l.Allowed(guess("2001:db8:1:3::1")) {
+		t.Error("the next /64 was refused")
+	}
+}
+
+// An account made through the open registration endpoint is marked, and an
+// operator's account of the same name made later is not: the mark goes with
+// the account, so a deleted stranger cannot leave its access, or its lack of
+// it, to whoever comes next.
+func TestSelfRegisteredAccountsAreMarked(t *testing.T) {
+	store := newStore(t)
+	if err := store.RegisterUser("stranger", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateUser("owner", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if self, err := store.SelfRegistered(" stranger "); err != nil || !self {
+		t.Errorf("registered account: self=%v err=%v, want marked", self, err)
+	}
+	if self, err := store.SelfRegistered("owner"); err != nil || self {
+		t.Errorf("operator's account: self=%v err=%v, want unmarked", self, err)
+	}
+	if err := store.DeleteUser("stranger"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateUser("stranger", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if self, _ := store.SelfRegistered("stranger"); self {
+		t.Error("an operator's account inherited a deleted registration's mark")
+	}
+
+	// The registration endpoint is what marks it.
+	srv := httptest.NewServer(NewServer(store, nil).Handler())
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+"/users/create", "application/json",
+		strings.NewReader(`{"username":"reader","password":"k"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if self, _ := store.SelfRegistered("reader"); resp.StatusCode != http.StatusCreated || !self {
+		t.Errorf("POST /users/create: %d, marked=%v", resp.StatusCode, self)
 	}
 }

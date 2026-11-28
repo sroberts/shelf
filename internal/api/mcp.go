@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"slices"
 )
@@ -60,6 +61,17 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request, user string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeError(w, http.StatusMethodNotAllowed, "this MCP server takes POST only; it offers no event stream")
+		return
+	}
+
+	// Tool results can carry a reader account's generated password, which
+	// is shown once and must not sit in any cache on the way.
+	w.Header().Set("Cache-Control", "no-store")
+	// The transport has the client send application/json. Requiring it keeps
+	// a cross-site form, which can post text/plain that happens to parse as
+	// JSON-RPC, out on its own rather than on the Origin check alone.
+	if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "send application/json")
 		return
 	}
 
@@ -164,6 +176,11 @@ func (s *Server) dispatch(req rpcRequest, user string) (any, *rpcError) {
 			args = json.RawMessage("{}")
 		}
 		out, err := tools[idx].call(s.svc, args, user)
+		if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrBadRequest) && !errors.Is(err, ErrConflict) {
+			// The client is told only "internal error", as REST does; the
+			// cause belongs in the operator's log, or it is lost entirely.
+			s.log.Error("mcp tool failed", "tool", p.Name, "err", err)
+		}
 		return toolResult(out, err), nil
 	}
 	return nil, &rpcError{rpcMethodNotFound, fmt.Sprintf("method %q not found", req.Method)}

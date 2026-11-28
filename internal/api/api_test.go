@@ -422,6 +422,18 @@ func TestMCPLifecycle(t *testing.T) {
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("GET /mcp: %d, want 405", resp.StatusCode)
 	}
+
+	// What a cross-site form can send: text/plain whose body parses as a
+	// JSON-RPC call. Refused before it is read.
+	resp, _ = f.do(t, "POST", "/mcp", "text/plain",
+		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"delete_shelf","arguments":{"name":"to-read"}},"x":"="}`)
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("text/plain MCP call: %d, want 415", resp.StatusCode)
+	}
+	resp, _ = f.do(t, "POST", "/mcp", "application/json", `{"jsonrpc":"2.0","id":7,"method":"ping"}`)
+	if resp.Header.Get("Cache-Control") != "no-store" {
+		t.Errorf("MCP response Cache-Control = %q, want no-store", resp.Header.Get("Cache-Control"))
+	}
 }
 
 func callTool(t *testing.T, f *fixture, name, args string) map[string]any {

@@ -61,15 +61,12 @@ func (l *Limiter) Failed(r *http.Request) {
 	}
 }
 
-// Succeeded clears r's client after a right password.
-func (l *Limiter) Succeeded(r *http.Request) {
-	if l == nil {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.fails, ClientIP(r))
-}
+// Succeeded is a right password from r's client. It deliberately forgives
+// nothing: if it cleared the address, anyone holding one working account —
+// their own reader's — could sign in with it after every nine guesses and
+// guess at everyone else's forever. Failures age out of the window instead,
+// which is soon enough for someone who mistyped.
+func (l *Limiter) Succeeded(*http.Request) {}
 
 // RetryAfter is how long to tell a refused client to wait, in seconds.
 func (l *Limiter) RetryAfter() int { return int(l.Window / time.Second) }
@@ -90,23 +87,49 @@ func (l *Limiter) recent(ip string) []time.Time {
 	return kept
 }
 
-// ClientIP is the address a request came from. X-Forwarded-For is believed
-// only from loopback: under Outpost's gateway and Tailscale Funnel every
-// request arrives from the local proxy, which sets it to the real sender. A
-// client connecting directly could write anything there, so for anyone else
-// the connection's own address is used.
+// ClientIP is the address a request came from, as the limiter counts it.
+//
+// X-Forwarded-For is believed only from loopback: under Outpost's gateway and
+// Tailscale Funnel every request arrives from a local proxy, which adds the
+// real sender. A client connecting directly could write anything there, so
+// for anyone else the connection's own address is used.
+//
+// The last entry that is not loopback is taken, not the first. A proxy
+// appends what it saw to whatever the client sent, so the first entry is the
+// client's own invention: trusting it let anyone on the internet claim a new
+// address with every guess. Entries to the right of the real sender are only
+// the local proxies, which are loopback.
+//
+// An IPv6 address counts as its /64, the block one subscriber is given, so
+// stepping through the addresses of one connection is not a new client each
+// time.
 func ClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			first, _, _ := strings.Cut(fwd, ",")
-			if f := strings.TrimSpace(first); f != "" {
-				return f
+		hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+		for i := len(hops) - 1; i >= 0; i-- {
+			hop := strings.TrimSpace(hops[i])
+			if hop == "" {
+				continue
 			}
+			if ip := net.ParseIP(hop); ip != nil && ip.IsLoopback() {
+				continue
+			}
+			host = hop
+			break
 		}
 	}
-	return host
+	return clientKey(host)
+}
+
+// clientKey reduces an IPv6 address to its /64.
+func clientKey(host string) string {
+	ip := net.ParseIP(host)
+	if ip == nil || ip.To4() != nil {
+		return host
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }

@@ -70,6 +70,11 @@ func TestHandler(t *testing.T) {
 			if got := rec.Header().Get("Content-Type"); tt.ctype != "" && got != tt.ctype {
 				t.Errorf("Content-Type = %q, want %q", got, tt.ctype)
 			}
+			// Framed, the page's own clicks would pass the Origin check.
+			if rec.Header().Get("X-Frame-Options") != "DENY" ||
+				rec.Header().Get("Content-Security-Policy") != "frame-ancestors 'none'" {
+				t.Errorf("frameable: %v", rec.Header())
+			}
 		})
 	}
 }

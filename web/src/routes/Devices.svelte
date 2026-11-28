@@ -92,6 +92,11 @@
           if (!isActive(next)) finished(next);
         } catch (err) {
           if (err.status === 404) delete current[j.device];
+          // Any other failure (a dropped connection, shelf restarting)
+          // changes nothing this effect reads, so it would never run again
+          // and the card would freeze on its last state. A fresh copy of the
+          // job is a change, and schedules the next poll.
+          else if (current[j.device]?.id === j.id) current[j.device] = { ...current[j.device] };
         }
       }
     }, 1000);

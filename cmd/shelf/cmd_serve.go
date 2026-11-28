@@ -116,7 +116,8 @@ var cmdServe = &command{
 		// Who a request is, for the catalog, the API and MCP. Under the
 		// gateway a verified identity token; otherwise, or for a client
 		// that cannot sign in there (the reader), a shelf account over
-		// HTTP Basic. One account works everywhere.
+		// HTTP Basic. One account works everywhere, except one the reader
+		// registered itself (see below).
 		identify := gatewayIdentity(env, logger)
 		authenticate := func(r *http.Request) (string, bool) {
 			if identify != nil {
@@ -133,6 +134,17 @@ var cmdServe = &command{
 				return "", false
 			}
 			limiter.Succeeded(r)
+			// An account made through POST /users/create came through an
+			// endpoint that asks nobody, open by default and reachable by
+			// any process on the machine. It reads the catalog and syncs
+			// progress, which is all registration ever offered; it does not
+			// get the API, which uploads, rewrites books, adds devices and
+			// resets other accounts' passwords.
+			if self, err := store.SelfRegistered(user); err != nil || self {
+				logger.Info("self-registered account refused outside progress sync and the catalog",
+					"username", user, "remote", kosync.ClientIP(r))
+				return "", false
+			}
 			return user, true
 		}
 
@@ -340,6 +352,10 @@ var cmdServe = &command{
 
 		select {
 		case err := <-errCh:
+			// Cancel before the deferred waits run: svc.Sync.Wait is deferred
+			// after cancelBG, so it runs first and would otherwise sit out a
+			// sync job of many minutes before the process could exit.
+			cancelBG()
 			return err
 		case <-ctx.Done():
 			if env.Supervised() {
@@ -571,8 +587,9 @@ func printServerBanner(addr net.Addr, storePath string, registration bool, catal
 		}
 	}
 
-	fmt.Printf("\nWeb UI: http://localhost:%s/ (the same account signs in)\n", port)
+	fmt.Printf("\nWeb UI: http://localhost:%s/ (an account from `shelf user add` signs in)\n", port)
 	fmt.Println("API: /v1 (described at /v1/openapi.json); MCP: /mcp. Both take the same account.")
+	fmt.Println("An account the reader registers itself is for progress sync and the catalog only.")
 	fmt.Println()
 	if registration {
 		fmt.Println("Registration is open, so the reader can create its account.")

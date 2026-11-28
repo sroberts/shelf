@@ -22,6 +22,7 @@ const (
 	EnvAuth       = "OUTPOST_AUTH"
 	EnvIssuer     = "OUTPOST_ISSUER"
 	EnvJWKSURL    = "OUTPOST_JWKS_URL"
+	EnvService    = "OUTPOST_SERVICE"
 )
 
 // Env is what Outpost told this process about itself.
@@ -36,6 +37,9 @@ type Env struct {
 	Gateway bool
 	Issuer  string
 	JWKSURL string
+	// Service is this app's own name, which the gateway puts in every
+	// identity token's svc claim (spec §3).
+	Service string
 }
 
 // FromEnv reads the process environment.
@@ -47,6 +51,7 @@ func parse(get func(string) string) Env {
 		Gateway:    get(EnvAuth) == "gateway",
 		Issuer:     get(EnvIssuer),
 		JWKSURL:    get(EnvJWKSURL),
+		Service:    strings.TrimSpace(get(EnvService)),
 	}
 	if p, err := strconv.Atoi(strings.TrimSpace(get(EnvPort))); err == nil && p > 0 && p < 65536 {
 		e.Port = p

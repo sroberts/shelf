@@ -474,6 +474,20 @@ func TestAddDeviceAppendsToTheConfig(t *testing.T) {
 	if resp, _ := f.do(t, "POST", "/v1/devices", "application/json", `{"name":"y"}`); resp.StatusCode != 400 {
 		t.Errorf("no host: %d, want 400", resp.StatusCode)
 	}
+	// The name becomes a file name in the state directory, and the host is
+	// pasted into a URL: neither may carry anything that changes where.
+	for _, bad := range []string{
+		`{"name":"../../escape","host":"10.0.0.2"}`,
+		`{"name":"z","host":"10.0.0.2@evil.example"}`,
+		`{"name":"z","host":"10.0.0.2?x"}`,
+	} {
+		if resp, body := f.do(t, "POST", "/v1/devices", "application/json", bad); resp.StatusCode != 400 {
+			t.Errorf("%s: %d %s, want 400", bad, resp.StatusCode, body)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.cfg.Paths.State, "..", "escape.json")); err == nil {
+		t.Error("a manifest was written outside the state directory")
+	}
 }
 
 func TestMCPSyncDefaultsToAPreview(t *testing.T) {

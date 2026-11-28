@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -76,13 +77,14 @@ var cmdScan = &command{
 var cmdLs = &command{
 	name:    "ls",
 	summary: "list and search books",
-	usage:   "ls [--json] [--sort KEY] [--limit N] [QUERY]",
+	usage:   "ls [--json] [--sort KEY] [--limit N] [--genre G] [QUERY]",
 	run: func(ctx context.Context, a *app, args []string) error {
 		fs := newFlagSet("ls")
 		asJSON := fs.Bool("json", false, "emit newline-delimited JSON")
 		sortBy := fs.String("sort", "", "sort key: title, author, series, size, added, modified, path, format (suffix -desc to reverse)")
 		limit := fs.Int("limit", 0, "maximum number of results")
 		paths := fs.Bool("paths", false, "print only file paths")
+		genre := fs.String("genre", "", "only books shelf serve's AI model classified into this genre (see 'shelf genres')")
 		if err := parseFlags(fs, args); err != nil {
 			return err
 		}
@@ -92,13 +94,25 @@ var cmdLs = &command{
 			return err
 		}
 
+		// Genres live in ai.db, not the index, so a genre filter is applied
+		// after the search and the limit after the filter.
+		genres := a.genres()
+		opts := library.SearchOptions{OrderBy: *sortBy}
+		if *genre == "" {
+			opts.Limit = *limit
+		}
 		query := strings.Join(fs.Args(), " ")
-		books, err := db.Search(query, library.SearchOptions{
-			OrderBy: *sortBy,
-			Limit:   *limit,
-		})
+		books, err := db.Search(query, opts)
 		if err != nil {
 			return err
+		}
+		if *genre != "" {
+			books = slices.DeleteFunc(books, func(b *library.Book) bool {
+				return !strings.EqualFold(genres[b.SHA256], *genre)
+			})
+			if *limit > 0 && len(books) > *limit {
+				books = books[:*limit]
+			}
 		}
 
 		// Reading progress is looked up once for the whole listing rather than
@@ -109,7 +123,9 @@ var cmdLs = &command{
 		switch {
 		case *asJSON:
 			for _, b := range books {
-				if err := emitJSON(toJSONWithProgress(b, byDoc)); err != nil {
+				out := toJSONWithProgress(b, byDoc)
+				out.Genre = genres[b.SHA256]
+				if err := emitJSON(out); err != nil {
 					return err
 				}
 			}
@@ -118,13 +134,13 @@ var cmdLs = &command{
 				fmt.Println(b.Path)
 			}
 		default:
-			printBookTable(books, byDoc)
+			printBookTable(books, byDoc, genres)
 		}
 		return nil
 	},
 }
 
-func printBookTable(books []*library.Book, byDoc map[string]kosync.Progress) {
+func printBookTable(books []*library.Book, byDoc map[string]kosync.Progress, genres map[string]string) {
 	if len(books) == 0 {
 		fmt.Fprintln(os.Stderr, "no books match")
 		return
@@ -140,12 +156,24 @@ func printBookTable(books []*library.Book, byDoc map[string]kosync.Progress) {
 		}
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	if showRead {
-		fmt.Fprintln(w, "TITLE\tAUTHOR\tSERIES\tFORMAT\tSIZE\tREAD")
-	} else {
-		fmt.Fprintln(w, "TITLE\tAUTHOR\tSERIES\tFORMAT\tSIZE")
+	// Likewise the genre column, which only shelf serve with AI fills in.
+	showGenre := false
+	for _, b := range books {
+		if genres[b.SHA256] != "" {
+			showGenre = true
+			break
+		}
 	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	header := "TITLE\tAUTHOR\tSERIES\tFORMAT\tSIZE"
+	if showGenre {
+		header += "\tGENRE"
+	}
+	if showRead {
+		header += "\tREAD"
+	}
+	fmt.Fprintln(w, header)
 
 	for _, b := range books {
 		series := b.Series
@@ -160,6 +188,9 @@ func printBookTable(books []*library.Book, byDoc map[string]kosync.Progress) {
 			b.Format,
 			humanSize(b.Size))
 
+		if showGenre {
+			row += "\t" + genres[b.SHA256]
+		}
 		if showRead {
 			read := ""
 			if pct := percentFor(b, byDoc); pct != nil {
@@ -212,10 +243,13 @@ var cmdMeta = &command{
 		}
 
 		if len(sets) == 0 {
+			genre := a.genres()[book.SHA256]
 			if *asJSON {
-				return emitJSON(toJSON(book))
+				out := toJSONWithProgress(book, a.progress())
+				out.Genre = genre
+				return emitJSON(out)
 			}
-			printMetadata(book)
+			printMetadata(book, genre)
 			return nil
 		}
 
@@ -244,7 +278,7 @@ var cmdMeta = &command{
 		if *asJSON {
 			return emitJSON(toJSON(updated))
 		}
-		printMetadata(updated)
+		printMetadata(updated, a.genres()[updated.SHA256])
 		return nil
 	},
 }
@@ -316,7 +350,7 @@ func splitList(s string) []string {
 	return out
 }
 
-func printMetadata(b *library.Book) {
+func printMetadata(b *library.Book, genre string) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	row := func(k, v string) {
 		if v != "" {
@@ -341,6 +375,7 @@ func printMetadata(b *library.Book) {
 	row("publisher", b.Publisher)
 	row("published", b.PubDate)
 	row("tags", strings.Join(b.Tags, ", "))
+	row("genre", genre)
 	for scheme, value := range b.Identifiers {
 		row(scheme, value)
 	}

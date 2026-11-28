@@ -18,6 +18,6 @@ shelf    1 Library    2 Devices    3 Sync                                       
                                                                     │                             │
                                                                     │                             │
                                                                     ╰─────────────────────────────╯
- 4 books — space to select, s to sync, / to filter
+ 4 books — space to select, s to sync, e to edit, / to filter, ? for more
 
  k/↑ up • j/↓ down • / filter • space toggle selection • i toggle details • s sync selection • ? help • q quit

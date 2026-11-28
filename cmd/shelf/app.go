@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/sroberts/shelf/internal/ai"
 	"github.com/sroberts/shelf/internal/config"
 	"github.com/sroberts/shelf/internal/kosync"
 	"github.com/sroberts/shelf/internal/library"
@@ -171,6 +172,8 @@ type bookJSON struct {
 	SHA256      string            `json:"sha256"`
 	Percent     *float64          `json:"percent_read,omitempty"`
 	Added       int64             `json:"added_unix"`
+	// Genre is the AI-assigned genre, when shelf serve has classified it.
+	Genre string `json:"genre,omitempty"`
 }
 
 func toJSON(b *library.Book) bookJSON { return toJSONWithProgress(b, nil) }
@@ -209,4 +212,57 @@ func humanSize(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// genres loads AI-assigned genres keyed by book SHA-256.
+//
+// Nil when ai.db does not exist: classification runs only under `shelf serve`
+// with Outpost's models, and a CLI listing must never create the store as a
+// side effect, or `shelf doctor` would report an AI database nothing wrote.
+func (a *app) genres() map[string]string {
+	cfg, err := a.config()
+	if err != nil {
+		return nil
+	}
+	if _, err := os.Stat(cfg.Paths.AIFile()); err != nil {
+		return nil
+	}
+	store, err := ai.OpenStore(cfg.Paths.AIFile())
+	if err != nil {
+		return nil
+	}
+	defer store.Close()
+	m, err := store.Genres()
+	if err != nil {
+		return nil
+	}
+	return m
+}
+
+// progressStore opens progress.db, for commands that change it.
+func (a *app) progressStore() (*kosync.Store, error) {
+	cfg, err := a.config()
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Paths.EnsureDirs(); err != nil {
+		return nil, err
+	}
+	return kosync.OpenStore(cfg.Paths.ProgressFile())
+}
+
+// progressUser is whose progress a command means: --user when given, else
+// [kosync] user from the config.
+func (a *app) progressUser(flagUser string) (string, error) {
+	if u := kosync.NormalizeUsername(flagUser); u != "" {
+		return u, nil
+	}
+	cfg, err := a.config()
+	if err != nil {
+		return "", err
+	}
+	if cfg.Kosync.User == "" {
+		return "", fmt.Errorf("%w: no user: pass --user, or set [kosync] user in config.toml", errUsage)
+	}
+	return cfg.Kosync.User, nil
 }

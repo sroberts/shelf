@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/sroberts/shelf/internal/ai"
 	"github.com/sroberts/shelf/internal/kosync"
 	"github.com/sroberts/shelf/internal/library"
 	syncpkg "github.com/sroberts/shelf/internal/sync"
@@ -43,8 +45,17 @@ type libraryModel struct {
 	syncState map[string]string
 
 	// readPct maps a book path to its read percentage, when progress sync is
-	// configured and something has been recorded.
+	// configured and something has been recorded. reading has the rest of
+	// that record, for the detail panel.
 	readPct map[string]float64
+	reading map[string]readingInfo
+
+	// genres maps a book's SHA-256 to its AI-assigned genre. Empty unless
+	// shelf serve has classified books with Outpost's model.
+	genres map[string]string
+
+	// action is the open book-action overlay, nil the rest of the time.
+	action *bookAction
 
 	// detail is the right-hand panel. It holds no state the table does not
 	// already have; it is fed on every cursor move.
@@ -66,6 +77,8 @@ func newLibraryModel(app *App, keys KeyMap, styles Styles) libraryModel {
 		selected:  map[string]bool{},
 		syncState: map[string]string{},
 		readPct:   map[string]float64{},
+		reading:   map[string]readingInfo{},
+		genres:    map[string]string{},
 		filter:    ti,
 		detail:    newDetailModel(styles, GraphicsNone),
 		loading:   true,
@@ -96,8 +109,18 @@ type (
 		query string
 	}
 	syncStateMsg struct{ state map[string]string }
-	readPctMsg   struct{ pct map[string]float64 }
+	readPctMsg   struct {
+		pct     map[string]float64
+		reading map[string]readingInfo
+	}
+	genresMsg struct{ genres map[string]string }
 )
+
+// readingInfo is where a reading position came from.
+type readingInfo struct {
+	device  string
+	updated int64
+}
 
 // loadProgress reads reading percentages from the kosync store.
 //
@@ -110,19 +133,20 @@ func (m libraryModel) loadProgress() tea.Cmd {
 
 	return func() tea.Msg {
 		out := map[string]float64{}
+		info := map[string]readingInfo{}
 		if cfg.Kosync.User == "" {
-			return readPctMsg{out}
+			return readPctMsg{out, info}
 		}
 
 		store, err := kosync.OpenStore(cfg.Paths.ProgressFile())
 		if err != nil {
-			return readPctMsg{out}
+			return readPctMsg{out, info}
 		}
 		defer store.Close()
 
 		byDoc, err := store.AllProgress(cfg.Kosync.User)
 		if err != nil {
-			return readPctMsg{out}
+			return readPctMsg{out, info}
 		}
 		for _, b := range books {
 			if b.DocID == "" {
@@ -130,9 +154,32 @@ func (m libraryModel) loadProgress() tea.Cmd {
 			}
 			if p, ok := byDoc[b.DocID]; ok {
 				out[b.Path] = p.Percentage * 100
+				info[b.Path] = readingInfo{device: p.Device, updated: p.Timestamp}
 			}
 		}
-		return readPctMsg{out}
+		return readPctMsg{out, info}
+	}
+}
+
+// loadGenres reads AI genres from ai.db, when it exists. Never creates it: the
+// TUI is not what classifies books, and an empty store it made would look like
+// one shelf serve had written.
+func (m libraryModel) loadGenres() tea.Cmd {
+	file := m.app.Config.Paths.AIFile()
+	return func() tea.Msg {
+		if _, err := os.Stat(file); err != nil {
+			return genresMsg{}
+		}
+		store, err := ai.OpenStore(file)
+		if err != nil {
+			return genresMsg{}
+		}
+		defer store.Close()
+		g, err := store.Genres()
+		if err != nil {
+			return genresMsg{}
+		}
+		return genresMsg{g}
 	}
 }
 
@@ -187,7 +234,7 @@ func (m libraryModel) computeSyncState() tea.Cmd {
 	}
 }
 
-func (m libraryModel) capturing() bool { return m.filtering }
+func (m libraryModel) capturing() bool { return m.filtering || m.action != nil }
 
 // setSize takes a pointer receiver deliberately: Bubble Tea child models are
 // held by value, so a value receiver here would update a copy and the screen
@@ -226,6 +273,7 @@ func (m *libraryModel) syncCursor() {
 	}
 	pct, ok := m.readPct[b.Path]
 	m.detail.setBook(b, m.syncState[b.Path], pct, ok)
+	m.detail.setExtra(m.reading[b.Path], m.genres[b.SHA256])
 }
 
 func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, tea.Cmd) {
@@ -242,7 +290,7 @@ func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, te
 			m.cursor = max(0, len(m.books)-1)
 		}
 		m.syncCursor()
-		return m, tea.Batch(m.computeSyncState(), m.loadProgress())
+		return m, tea.Batch(m.computeSyncState(), m.loadProgress(), m.loadGenres())
 
 	case syncStateMsg:
 		m.syncState = msg.state
@@ -251,14 +299,67 @@ func (m libraryModel) Update(ctx context.Context, msg tea.Msg) (libraryModel, te
 
 	case readPctMsg:
 		m.readPct = msg.pct
+		m.reading = msg.reading
 		m.syncCursor()
 		return m, nil
 
+	case genresMsg:
+		m.genres = msg.genres
+		m.syncCursor()
+		return m, nil
+
+	case shelvesForMsg:
+		if msg.err != nil {
+			return m, reportErr(msg.err)
+		}
+		if msg.kind == actRemoveShelf && len(msg.shelves) == 0 {
+			return m, setStatus("no manual shelf holds %s", countBooks(len(msg.books)))
+		}
+		m.action = newShelfPicker(msg.kind, msg.books, msg.shelves, m.styles)
+		return m, textinput.Blink
+
+	case actionDoneMsg:
+		if m.action == nil {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.action.busy = false
+			// A form stays open so nothing typed is lost; a confirmation has
+			// nothing to keep and closes with the error on the status line.
+			if len(m.action.inputs) > 0 {
+				m.action.err = msg.err.Error()
+				return m, nil
+			}
+			m.action = nil
+			return m, reportErr(msg.err)
+		}
+		// Selection is by path, and a delete or import changes which paths
+		// exist; clearing it means no action can act on a book that is gone.
+		if m.action.kind == actDelete {
+			m.selected = map[string]bool{}
+		}
+		m.action = nil
+		m.loading = true
+		status := msg.status
+		return m, func() tea.Msg { return libraryChangedMsg{status: status} }
+
 	case tea.KeyPressMsg:
+		if m.action != nil {
+			return m.updateAction(msg)
+		}
 		if m.filtering {
 			return m.updateFilter(ctx, msg)
 		}
 		return m.updateNormal(ctx, msg)
+
+	default:
+		// Cursor blinks and other input-internal messages.
+		if m.action != nil && len(m.action.inputs) > 0 {
+			var cmd tea.Cmd
+			a := m.action
+			a.inputs[a.focus], cmd = a.inputs[a.focus].Update(msg)
+			return m, cmd
+		}
 	}
 	return m, nil
 }
@@ -286,6 +387,9 @@ func (m libraryModel) updateFilter(ctx context.Context, msg tea.KeyPressMsg) (li
 }
 
 func (m libraryModel) updateNormal(ctx context.Context, msg tea.KeyPressMsg) (libraryModel, tea.Cmd) {
+	if next, cmd, ok := m.startAction(msg); ok {
+		return next, cmd
+	}
 	switch {
 	case key.Matches(msg, m.keys.Detail):
 		m.detail.visible = !m.detail.visible
@@ -442,6 +546,9 @@ func (m libraryModel) visibleRows() int {
 }
 
 func (m libraryModel) hint() string {
+	if m.action != nil {
+		return m.action.hint()
+	}
 	if m.filtering {
 		return "enter to apply the filter, esc to cancel"
 	}
@@ -452,15 +559,18 @@ func (m libraryModel) hint() string {
 	case len(m.books) == 0 && m.query != "":
 		return fmt.Sprintf("no books match %q — / to change the filter", m.query)
 	case len(m.books) == 0:
-		return "library is empty — run 'shelf import' or 'shelf scan'"
+		return "library is empty — I to import a file, or run 'shelf scan'"
 	case n > 0:
-		return fmt.Sprintf("%d selected — s to sync them, A to clear", n)
+		return fmt.Sprintf("%d selected — s to sync, + / - shelves, A to clear", n)
 	default:
-		return fmt.Sprintf("%d books — space to select, s to sync, / to filter", len(m.books))
+		return fmt.Sprintf("%d books — space to select, s to sync, e to edit, / to filter, ? for more", len(m.books))
 	}
 }
 
 func (m libraryModel) View() string {
+	if m.action != nil {
+		return m.actionView()
+	}
 	table := m.tableView()
 
 	panel := m.detail.View()

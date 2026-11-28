@@ -40,8 +40,19 @@ type KeyMap struct {
 	Refresh key.Binding
 	// AddDevice opens the add-device form on the Devices screen.
 	AddDevice key.Binding
-	Confirm   key.Binding
-	Cancel    key.Binding
+
+	// Book actions on the Library screen. Each applies to the selection, or
+	// to the book under the cursor when nothing is selected (Edit is always
+	// the book under the cursor).
+	Edit          key.Binding
+	AddToShelf    key.Binding
+	RemoveShelf   key.Binding
+	ClearProgress key.Binding
+	DeleteBook    key.Binding
+	Import        key.Binding
+
+	Confirm key.Binding
+	Cancel  key.Binding
 
 	// Meta
 	Help key.Binding
@@ -148,6 +159,30 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("n"),
 			key.WithHelp("n", "add device"),
 		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit metadata"),
+		),
+		AddToShelf: key.NewBinding(
+			key.WithKeys("+"),
+			key.WithHelp("+", "add to shelf"),
+		),
+		RemoveShelf: key.NewBinding(
+			key.WithKeys("-"),
+			key.WithHelp("-", "remove from shelf"),
+		),
+		ClearProgress: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "clear reading position"),
+		),
+		DeleteBook: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "delete book"),
+		),
+		Import: key.NewBinding(
+			key.WithKeys("I"),
+			key.WithHelp("I", "import a file"),
+		),
 		Confirm: key.NewBinding(
 			key.WithKeys("enter", "y"),
 			key.WithHelp("enter", "confirm"),
@@ -180,6 +215,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.NextScreen, k.PrevScreen, k.Library, k.Devices, k.SyncScreen},
 		{k.Select, k.VisualSel, k.SelectAll, k.ClearSel, k.Filter},
 		{k.Detail, k.DetailUp, k.DetailDown, k.Refresh, k.AddDevice},
+		{k.Edit, k.AddToShelf, k.RemoveShelf, k.ClearProgress, k.DeleteBook, k.Import},
 		{k.Sync, k.SyncAll, k.Confirm, k.Cancel, k.Help, k.Quit},
 	}
 }

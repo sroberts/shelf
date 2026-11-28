@@ -191,6 +191,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stats = msg.stats
 		return m, nil
 
+	case libraryChangedMsg:
+		// A book action changed the library: reload the table and the
+		// header counts, both off the UI thread.
+		m.status = msg.status
+		m.err = nil
+		return m, tea.Batch(m.library.load(m.ctx), m.loadStats())
+
 	case spinner.TickMsg:
 		// The spinner animates only while something is actually in flight, so
 		// an idle shelf does not redraw the screen ten times a second.

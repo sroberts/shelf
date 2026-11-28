@@ -40,6 +40,12 @@ type detailModel struct {
 	syncGlyph string
 	readPct   float64
 	hasRead   bool
+	reading   readingInfo
+	genre     string
+
+	// now is the clock relative times are measured against, a field so a
+	// test can pin it.
+	now func() time.Time
 
 	width, height int
 	visible       bool
@@ -72,6 +78,7 @@ func newDetailModel(styles Styles, graphics GraphicsMode) detailModel {
 		graphics: graphics,
 		visible:  true,
 		covers:   map[string]string{},
+		now:      time.Now,
 	}
 }
 
@@ -114,6 +121,16 @@ func (m *detailModel) setBook(b *library.Book, glyph string, pct float64, hasRea
 	if !same {
 		m.vp.GotoTop()
 	}
+	m.refresh()
+}
+
+// setExtra adds what the book row does not carry: where its reading position
+// came from, and its AI genre.
+func (m *detailModel) setExtra(r readingInfo, genre string) {
+	if m.reading == r && m.genre == genre {
+		return
+	}
+	m.reading, m.genre = r, genre
 	m.refresh()
 }
 
@@ -206,8 +223,18 @@ func (m detailModel) content() string {
 func (m detailModel) readingProgress() string {
 	label := m.styles.StatLabel.Render("READING")
 	pct := kosync.FormatPercent(m.readPct)
-	return label + "  " + m.styles.StatValue.Render(pct) + "\n" +
-		m.bar.ViewAs(clampFloat(m.readPct/100, 0, 1))
+	line := label + "  " + m.styles.StatValue.Render(pct)
+	var from []string
+	if m.reading.device != "" {
+		from = append(from, m.reading.device)
+	}
+	if when := relativeTime(m.reading.updated, m.now()); when != "" {
+		from = append(from, when)
+	}
+	if len(from) > 0 {
+		line += "  " + m.styles.Subtle.Render(strings.Join(from, " · "))
+	}
+	return line + "\n" + m.bar.ViewAs(clampFloat(m.readPct/100, 0, 1))
 }
 
 // syncLine says where this book stands against the device, in words.
@@ -265,6 +292,9 @@ func (m detailModel) fields() string {
 	}
 	if b.AddedUnix > 0 {
 		rows = append(rows, [2]string{"ADDED", time.Unix(b.AddedUnix, 0).Format("2006-01-02")})
+	}
+	if m.genre != "" {
+		rows = append(rows, [2]string{"GENRE", m.genre})
 	}
 	if b.Language != "" {
 		rows = append(rows, [2]string{"LANGUAGE", b.Language})
@@ -337,4 +367,24 @@ func clampFloat(v, lo, hi float64) float64 {
 		return hi
 	}
 	return v
+}
+
+// relativeTime renders when a reading position was synced, as a short age.
+func relativeTime(unix int64, now time.Time) string {
+	if unix <= 0 {
+		return ""
+	}
+	d := now.Sub(time.Unix(unix, 0))
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return time.Unix(unix, 0).Format("2006-01-02")
+	}
 }

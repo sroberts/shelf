@@ -20,6 +20,9 @@
   let fresh = $state(null);
   let copied = $state('');
   let deleting = $state(null);
+  /** The account whose password is about to change, while its dialog is open. */
+  let resetting = $state(null);
+  let resetOpen = $state(false);
   let confirmOpen = $state(false);
 
   // The address this page was opened at is the one the reader needs too: under
@@ -175,7 +178,7 @@
             <span class="muted small">{acct.books} {acct.books === 1 ? 'book' : 'books'} with a reading position{#if acct.created_unix}{' · '}made {relativeTime(acct.created_unix)}{/if}</span>
           </span>
           <span class="acts">
-            <button class="btn small" onclick={() => reset(acct)}>New password</button>
+            <button class="btn small" onclick={() => { resetting = acct; resetOpen = true; }}>New password</button>
             <button class="btn small ghost danger-text" onclick={() => { deleting = acct; confirmOpen = true; }}>Delete</button>
           </span>
         </li>
@@ -183,6 +186,17 @@
     </ul>
   {/if}
 </section>
+
+{#if resetting}
+  <!-- A new password signs the reader out the moment it is made, so ask. -->
+  <Confirm
+    bind:open={resetOpen}
+    title="New password for {resetting.name}?"
+    body="The current password stops working now, so a reader signed in as {resetting.name} stops syncing until you enter the new one on it. Reading positions are kept."
+    confirmLabel="Make a new password"
+    onconfirm={() => reset(resetting)}
+  />
+{/if}
 
 {#if deleting}
   <Confirm

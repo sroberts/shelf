@@ -1,4 +1,5 @@
 <script>
+  import { tick } from 'svelte';
   import { Download, Pencil, ArrowLeft, Plus, X } from '@lucide/svelte';
   import { api, fileUrl } from '../lib/api.js';
   import { session, feature, toast, refreshStats } from '../lib/session.svelte.js';
@@ -85,7 +86,7 @@
     }
   }
 
-  function startEdit() {
+  async function startEdit() {
     form = {
       title: book.title || '',
       authors: (book.authors || []).join(', '),
@@ -99,6 +100,10 @@
     };
     editing = true;
     editDialog.showModal();
+    // The form renders after the dialog opens, so autofocus has nothing to
+    // act on yet; put the cursor in Title once it exists.
+    await tick();
+    editDialog.querySelector('input')?.focus();
   }
 
   /** Only what changed is sent, so a field shelf could not read is left alone. */

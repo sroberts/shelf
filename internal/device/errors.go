@@ -60,6 +60,14 @@ var (
 	// every path, suspect the card rather than the path.
 	ErrMkdirFailed = errors.New("device: could not create folder")
 
+	// ErrListFailed is the firmware refusing to list a folder.
+	//
+	// Firmware 1.6.1 answers 500 {"error":"Directory listing failed"} for a
+	// folder that does not exist, where 1.4.1 answered 200 []. The same words
+	// could mean a card that will not read, so List resolves it against the
+	// parent folder rather than trusting the text: see Client.List.
+	ErrListFailed = errors.New("device: could not list folder")
+
 	// ErrUnsupportedFirmware is returned when the firmware major version is
 	// outside the range shelf has been tested against.
 	ErrUnsupportedFirmware = errors.New("device: unsupported firmware version")
@@ -83,6 +91,8 @@ var deviceErrors = []struct {
 	{"Failed to create folder", ErrMkdirFailed},
 	{"Missing folder name", ErrMkdirFailed},
 	{"Item not found", ErrNotFound},
+	// Observed on hardware running 1.6.1, for a missing folder.
+	{"Directory listing failed", ErrListFailed},
 }
 
 // ParseDeviceError maps a device message to a typed error.

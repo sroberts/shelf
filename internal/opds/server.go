@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sroberts/shelf/internal/kosync"
 	"github.com/sroberts/shelf/internal/library"
 )
 
@@ -45,6 +46,11 @@ type Server struct {
 	// falls through to Basic, so this only ever widens who gets in by what
 	// the proxy vouches for.
 	Identify func(*http.Request) (user string, ok bool)
+
+	// Limiter, when set, refuses an address after repeated wrong passwords.
+	// The catalog is one of the reader's public paths, so under Funnel it is
+	// on the internet.
+	Limiter *kosync.Limiter
 }
 
 // NewServer builds a server over a catalog.
@@ -134,7 +140,14 @@ func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
 			s.challenge(w)
 			return
 		}
+		if !s.Limiter.Allowed(r) {
+			s.log.Warn("too many failed sign-ins; refusing", "remote", kosync.ClientIP(r))
+			w.Header().Set("Retry-After", strconv.Itoa(s.Limiter.RetryAfter()))
+			http.Error(w, "too many attempts; try again later", http.StatusTooManyRequests)
+			return
+		}
 		if err := s.Auth.CheckPassword(username, password); err != nil {
+			s.Limiter.Failed(r)
 			// Same log-versus-response split as kosync: the operator needs the
 			// attempted username, the client gets nothing to enumerate with.
 			s.log.Info("opds authentication failed",
@@ -142,6 +155,7 @@ func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
 			s.challenge(w)
 			return
 		}
+		s.Limiter.Succeeded(r)
 		next(w, r)
 	}
 }

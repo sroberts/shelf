@@ -423,6 +423,24 @@ FROM progress WHERE username = ?`, username)
 	return out, rows.Err()
 }
 
+// DeleteProgress forgets a user's position in one document. It reports
+// ErrNoProgress when there was none, so a caller can tell a typo from a clear.
+//
+// This forgets only shelf's copy. The reader keeps its own position and pushes
+// it again the next time the book is open with sync on; clearing is for a
+// position that should stop showing up here, not a way to move the reader.
+func (s *Store) DeleteProgress(username, document string) error {
+	res, err := s.db.Exec(`DELETE FROM progress WHERE username = ? AND document = ?`,
+		NormalizeUsername(username), document)
+	if err != nil {
+		return fmt.Errorf("kosync: delete progress: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNoProgress
+	}
+	return nil
+}
+
 // Users lists registered usernames.
 func (s *Store) Users() ([]string, error) {
 	rows, err := s.db.Query(`SELECT username FROM users ORDER BY username`)

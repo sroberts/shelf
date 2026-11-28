@@ -138,9 +138,10 @@ func (s *Server) dispatch(req rpcRequest, user string) (any, *rpcError) {
 				"inputSchema": t.schema,
 				"annotations": map[string]any{
 					"readOnlyHint":    t.readOnly,
-					"destructiveHint": false,
-					"idempotentHint":  true,
-					"openWorldHint":   false,
+					"destructiveHint": t.destructive,
+					"idempotentHint":  !t.notIdempotent,
+					// A sync reaches out to a device on the network.
+					"openWorldHint": t.openWorld,
 				},
 			})
 		}
@@ -174,7 +175,7 @@ func (s *Server) dispatch(req rpcRequest, user string) (any, *rpcError) {
 func toolResult(out any, err error) map[string]any {
 	if err != nil {
 		msg := err.Error()
-		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrBadRequest) {
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrBadRequest) && !errors.Is(err, ErrConflict) {
 			msg = "internal error"
 		}
 		return map[string]any{
@@ -195,6 +196,9 @@ func toolResult(out any, err error) map[string]any {
 type tool struct {
 	name, title, description string
 	readOnly                 bool
+	destructive              bool
+	notIdempotent            bool
+	openWorld                bool
 	schema                   map[string]any
 	call                     func(svc *Service, args json.RawMessage, user string) (any, error)
 }
@@ -364,6 +368,226 @@ var tools = []tool{
 				return nil, err
 			}
 			return svc.ReadingProgress(a.User, user)
+		},
+	},
+	{
+		name: "update_book_metadata", title: "Edit a book's metadata",
+		description: "Change an EPUB's title, authors, series, tags and other fields, written into the file itself. " +
+			"Only the fields given change; an empty list clears authors or tags. The file does not move, so the " +
+			"book keeps its place on the reader, but the next sync re-sends it with the new metadata.",
+		schema: obj(map[string]any{
+			"id":           propBookID,
+			"title":        map[string]any{"type": "string"},
+			"authors":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"series":       map[string]any{"type": "string", "description": "empty removes the series"},
+			"series_index": map[string]any{"type": "number"},
+			"language":     map[string]any{"type": "string", "description": "BCP 47, e.g. en"},
+			"publisher":    map[string]any{"type": "string"},
+			"pubdate":      map[string]any{"type": "string", "description": "e.g. 2020 or 2020-03-01"},
+			"description":  map[string]any{"type": "string"},
+			"tags":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		}, "id"),
+		call: func(svc *Service, args json.RawMessage, user string) (any, error) {
+			a, err := decode[struct {
+				ID int64 `json:"id"`
+				BookPatch
+			}](args)
+			if err != nil {
+				return nil, err
+			}
+			return svc.UpdateBook(a.ID, a.BookPatch, user)
+		},
+	},
+	{
+		name: "create_shelf", title: "Create a shelf", notIdempotent: true,
+		description: "Create a shelf. With a query it is a saved search whose books follow the query " +
+			"(e.g. tag:sci-fi and not tag:read); without one it is a manual shelf for add_to_shelf.",
+		schema: obj(map[string]any{
+			"name":  propShelf,
+			"query": map[string]any{"type": "string", "description": "saved search; omit for a manual shelf"},
+		}, "name"),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			a, err := decode[struct{ Name, Query string }](args)
+			if err != nil {
+				return nil, err
+			}
+			return svc.CreateShelf(a.Name, a.Query)
+		},
+	},
+	{
+		name: "delete_shelf", title: "Delete a shelf", destructive: true,
+		description: "Delete a shelf's definition. Its books stay in the library and on the reader.",
+		schema:      obj(map[string]any{"name": propShelf}, "name"),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			a, err := decode[struct{ Name string }](args)
+			if err != nil {
+				return nil, err
+			}
+			if err := svc.DeleteShelf(a.Name); err != nil {
+				return nil, err
+			}
+			return map[string]any{"deleted": a.Name}, nil
+		},
+	},
+	{
+		name: "clear_reading_progress", title: "Clear a reading position", destructive: true,
+		description: "Forget shelf's stored reading position for one book. The reader keeps its own position " +
+			"and sends it again the next time the book is open with sync on; use this for stale entries.",
+		schema: obj(map[string]any{"id": propBookID, "user": propUser}, "id"),
+		call: func(svc *Service, args json.RawMessage, user string) (any, error) {
+			a, err := decode[struct {
+				ID   int64
+				User string
+			}](args)
+			if err != nil {
+				return nil, err
+			}
+			if err := svc.ClearProgress(a.ID, a.User, user); err != nil {
+				return nil, err
+			}
+			return map[string]any{"cleared": a.ID}, nil
+		},
+	},
+	{
+		name: "list_devices", title: "List readers", readOnly: true,
+		description: "The e-readers shelf syncs to, with when each was last synced and how many books it holds.",
+		schema:      obj(map[string]any{}),
+		call: func(svc *Service, _ json.RawMessage, _ string) (any, error) {
+			if svc.Sync == nil {
+				return nil, badRequest("syncing is not available")
+			}
+			res, err := svc.Sync.Devices()
+			return map[string]any{"devices": res}, err
+		},
+	},
+	{
+		name: "add_device", title: "Add a reader", notIdempotent: true,
+		description: "Add a Wi-Fi e-reader by its network address (the one its file transfer screen shows).",
+		schema: obj(map[string]any{
+			"name": map[string]any{"type": "string", "description": "a nickname, e.g. x4"},
+			"host": map[string]any{"type": "string", "description": "IP address or hostname"},
+			"root": map[string]any{"type": "string", "description": "folder on the reader; default /"},
+		}, "name", "host"),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			if svc.Sync == nil {
+				return nil, badRequest("syncing is not available")
+			}
+			a, err := decode[struct{ Name, Host, Root string }](args)
+			if err != nil {
+				return nil, err
+			}
+			return svc.Sync.AddDevice(a.Name, a.Host, a.Root)
+		},
+	},
+	{
+		name: "sync_to_device", title: "Sync to a reader", notIdempotent: true, openWorld: true,
+		description: "Start sending a shelf (or the whole library) to a reader. Runs as a job: poll get_sync_job. " +
+			"dry_run defaults to true and only plans; show the user the plan, then run again with dry_run false. " +
+			"prune also deletes books on the reader that are not in the shelf, so ask before setting it. " +
+			"Books already on the reader never move, so nobody loses their place.",
+		schema: obj(map[string]any{
+			"device":  map[string]any{"type": "string", "description": "device name from list_devices; default device if omitted"},
+			"shelf":   map[string]any{"type": "string", "description": "shelf to send; whole library if omitted"},
+			"prune":   map[string]any{"type": "boolean"},
+			"dry_run": map[string]any{"type": "boolean", "default": true},
+		}),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			a, err := decode[struct {
+				Device, Shelf string
+				Prune         bool
+				DryRun        *bool `json:"dry_run"`
+			}](args)
+			if err != nil {
+				return nil, err
+			}
+			dry := a.DryRun == nil || *a.DryRun
+			return svc.StartSync(SyncRequest{Device: a.Device, Shelf: a.Shelf, Prune: a.Prune, DryRun: dry})
+		},
+	},
+	{
+		name: "get_sync_job", title: "Check a sync", readOnly: true,
+		description: "A sync job's state: its plan, progress while running, and the result when done.",
+		schema:      obj(map[string]any{"id": map[string]any{"type": "string"}}, "id"),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			if svc.Sync == nil {
+				return nil, badRequest("syncing is not available")
+			}
+			a, err := decode[struct{ ID string }](args)
+			if err != nil {
+				return nil, err
+			}
+			return svc.Sync.Job(a.ID)
+		},
+	},
+	{
+		name: "cancel_sync_job", title: "Cancel a sync",
+		description: "Stop a running sync. Books already sent stay; the next sync carries on from there.",
+		schema:      obj(map[string]any{"id": map[string]any{"type": "string"}}, "id"),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			if svc.Sync == nil {
+				return nil, badRequest("syncing is not available")
+			}
+			a, err := decode[struct{ ID string }](args)
+			if err != nil {
+				return nil, err
+			}
+			return svc.Sync.Cancel(a.ID)
+		},
+	},
+	{
+		name: "list_reader_accounts", title: "List reader accounts", readOnly: true,
+		description: "The accounts e-readers sign in with, for progress sync and the OPDS catalog, with how many books each has a reading position in.",
+		schema:      obj(map[string]any{}),
+		call: func(svc *Service, _ json.RawMessage, _ string) (any, error) {
+			res, err := svc.Accounts()
+			return map[string]any{"accounts": res}, err
+		},
+	},
+	{
+		name: "create_reader_account", title: "Create a reader account", notIdempotent: true,
+		description: "Create an account for an e-reader. Leave password out and shelf generates one that is easy to type " +
+			"on the reader and safe to expose through Tailscale Funnel; it is returned once, in this result, and " +
+			"cannot be shown again. The reader uses it for both the OPDS catalog (<server>/opds) and progress sync (<server>).",
+		schema: obj(map[string]any{
+			"name":     map[string]any{"type": "string", "description": "account name, e.g. x4"},
+			"password": map[string]any{"type": "string", "minLength": 10, "description": "omit to generate one"},
+		}, "name"),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			a, err := decode[struct{ Name, Password string }](args)
+			if err != nil {
+				return nil, err
+			}
+			return svc.CreateAccount(a.Name, a.Password)
+		},
+	},
+	{
+		name: "reset_reader_password", title: "Reset a reader account's password", notIdempotent: true,
+		description: "Give a reader account a new password (generated when none is given, returned once). Reading positions are kept; the reader must sign in again.",
+		schema: obj(map[string]any{
+			"name":     map[string]any{"type": "string"},
+			"password": map[string]any{"type": "string", "minLength": 10, "description": "omit to generate one"},
+		}, "name"),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			a, err := decode[struct{ Name, Password string }](args)
+			if err != nil {
+				return nil, err
+			}
+			return svc.ResetPassword(a.Name, a.Password)
+		},
+	},
+	{
+		name: "delete_reader_account", title: "Delete a reader account", destructive: true,
+		description: "Delete a reader account and every reading position it holds. Ask the user first: positions cannot be recovered.",
+		schema:      obj(map[string]any{"name": map[string]any{"type": "string"}}, "name"),
+		call: func(svc *Service, args json.RawMessage, _ string) (any, error) {
+			a, err := decode[struct{ Name string }](args)
+			if err != nil {
+				return nil, err
+			}
+			if err := svc.DeleteAccount(a.Name); err != nil {
+				return nil, err
+			}
+			return map[string]any{"deleted": a.Name}, nil
 		},
 	},
 }

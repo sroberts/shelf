@@ -8,9 +8,12 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -34,12 +37,16 @@ func badRequest(format string, args ...any) error {
 type ProgressSource interface {
 	AllProgress(username string) (map[string]kosync.Progress, error)
 	Users() ([]string, error)
+	DeleteProgress(username, document string) error
 }
 
 // GenreSource is the AI classification store, or nil when AI is off.
 type GenreSource interface {
 	Genre(sha256 string) (string, bool)
 	Genres() (map[string]string, error)
+	// Carry moves an answer to a book's new hash after an edit changed its
+	// bytes, so the operator does not pay to classify the same book twice.
+	Carry(fromSHA, toSHA string) error
 }
 
 // Service answers every API question.
@@ -60,8 +67,25 @@ type Service struct {
 
 	Version string
 
+	// ImportTemplate is the naming template uploads are placed by, and
+	// StageDir is scratch space they land in before they are placed.
+	ImportTemplate string
+	StageDir       string
+	// OnImport, when set, is called after books join the library, so the
+	// caller can enrich them (classify genres) without polling.
+	OnImport func()
+
+	// Sync, when set, lets clients list devices and sync to them.
+	Sync *SyncService
+
+	// AccountDB holds reader accounts, the ones the e-reader signs in with.
+	AccountDB AccountStore
+
 	// mu serialises shelf edits: each is a read-modify-write of shelves.toml.
 	mu sync.Mutex
+	// editMu serialises writes to the library's files: metadata edits and
+	// imports, which both choose or rewrite files on disk.
+	editMu sync.Mutex
 }
 
 // Book is the API's stable shape for a book. Defined here rather than
@@ -84,8 +108,18 @@ type Book struct {
 	Identifiers map[string]string `json:"identifiers,omitempty"`
 	SHA256      string            `json:"sha256"`
 	AddedUnix   int64             `json:"added_unix"`
+	Description string            `json:"description,omitempty"`
+	HasCover    bool              `json:"has_cover"`
 	Genre       string            `json:"genre,omitempty"`
 	Percent     *float64          `json:"percent_read,omitempty"`
+	Reading     *Reading          `json:"reading,omitempty"`
+}
+
+// Reading is where a reader last was in a book.
+type Reading struct {
+	Percent float64 `json:"percent"`
+	Device  string  `json:"device,omitempty"`
+	Updated int64   `json:"updated_unix"`
 }
 
 // BookList is one page of books.
@@ -362,15 +396,8 @@ func (s *Service) editShelf(name string, ids []int64, edit func(string, []string
 	if err := edit(name, paths); err != nil {
 		return nil, err
 	}
-	if s.SaveShelves != nil {
-		if err := s.SaveShelves(); err != nil {
-			if s.ReloadShelves != nil {
-				// Put the index back to what the file says, so a later
-				// successful save cannot quietly persist this edit.
-				_ = s.ReloadShelves()
-			}
-			return nil, fmt.Errorf("save shelves: %w", err)
-		}
+	if err := s.saveShelves(); err != nil {
+		return nil, err
 	}
 
 	books, err := s.DB.ShelfBooks(name)
@@ -504,10 +531,13 @@ func (s *Service) convertOne(b *library.Book, byDoc map[string]kosync.Progress) 
 		SHA256:      b.SHA256,
 		AddedUnix:   b.AddedUnix,
 	}
+	out.Description = description(b.MetaJSON)
+	out.HasCover = len(b.Cover) > 0
 	out.Genre, _ = s.genre(b.SHA256)
 	if p, ok := byDoc[b.DocID]; ok && b.DocID != "" {
 		pct := p.Percentage * 100
 		out.Percent = &pct
+		out.Reading = &Reading{Percent: pct, Device: p.Device, Updated: p.Timestamp}
 	}
 	return out
 }
@@ -525,6 +555,25 @@ func (s *Service) relPath(p string) string {
 	}
 	return filepath.ToSlash(rel)
 }
+
+// description reads the blurb out of the metadata the scan kept. It is not an
+// index column because nothing searches or sorts by it; only a detail view
+// shows it.
+func description(metaJSON string) string {
+	if metaJSON == "" {
+		return ""
+	}
+	var m struct{ Description string }
+	if json.Unmarshal([]byte(metaJSON), &m) != nil {
+		return ""
+	}
+	// EPUB descriptions are often HTML. Clients get text: a client that
+	// rendered the markup would be rendering whatever a book file carried.
+	text := html.UnescapeString(markup.ReplaceAllString(m.Description, " "))
+	return strings.Join(strings.Fields(text), " ")
+}
+
+var markup = regexp.MustCompile(`<[^>]*>`)
 
 func nonNil(s []string) []string {
 	if s == nil {

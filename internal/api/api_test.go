@@ -30,6 +30,13 @@ type fixture struct {
 type fakeProgress map[string]map[string]kosync.Progress
 
 func (f fakeProgress) AllProgress(u string) (map[string]kosync.Progress, error) { return f[u], nil }
+func (f fakeProgress) DeleteProgress(u, doc string) error {
+	if _, ok := f[u][doc]; !ok {
+		return kosync.ErrNoProgress
+	}
+	delete(f[u], doc)
+	return nil
+}
 func (f fakeProgress) Users() ([]string, error) {
 	var out []string
 	for u := range f {
@@ -44,6 +51,14 @@ type fakeGenres map[string]string
 func (f fakeGenres) Genre(sha string) (string, bool) { g, ok := f[sha]; return g, ok }
 func (f fakeGenres) Genres() (map[string]string, error) {
 	return f, nil
+}
+func (f fakeGenres) Carry(from, to string) error {
+	if g, ok := f[from]; ok {
+		if _, taken := f[to]; !taken {
+			f[to] = g
+		}
+	}
+	return nil
 }
 
 func newFixture(t *testing.T) *fixture {

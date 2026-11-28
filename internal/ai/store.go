@@ -147,3 +147,19 @@ func (s *Store) SetGenre(sha256, genre string, fiction *float64, model string) e
 	}
 	return nil
 }
+
+// Carry copies a book's answer to its new hash after its bytes changed under a
+// metadata edit. The book is the same book, and asking again would cost the
+// operator a model call for an answer already paid for. A book with no answer
+// carries nothing; an answer already recorded for the new hash is kept.
+func (s *Store) Carry(fromSHA, toSHA string) error {
+	if fromSHA == toSHA {
+		return nil
+	}
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO genres (sha256, genre, fiction, model, classified_at)
+		SELECT ?, genre, fiction, model, classified_at FROM genres WHERE sha256 = ?`, toSHA, fromSHA)
+	if err != nil {
+		return fmt.Errorf("ai: carry genre: %w", err)
+	}
+	return nil
+}

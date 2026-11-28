@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -37,6 +38,10 @@ type Server struct {
 	// network, and an open registration endpoint on a listener bound to all
 	// interfaces is an invitation.
 	AllowRegistration bool
+
+	// Limiter, when set, refuses an address after repeated wrong passwords.
+	// Shared with the catalog and API so guessing on one counts on all.
+	Limiter *Limiter
 }
 
 // NewServer builds a server over a store.
@@ -105,7 +110,14 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (string, b
 		return "", false
 	}
 
+	if !s.Limiter.Allowed(r) {
+		s.log.Warn("too many failed sign-ins; refusing", "remote", ClientIP(r))
+		w.Header().Set("Retry-After", strconv.Itoa(s.Limiter.RetryAfter()))
+		writeError(w, http.StatusTooManyRequests, 2001, "Too many attempts; try again later")
+		return "", false
+	}
 	if err := s.store.Authenticate(c.username, c.key); err != nil {
+		s.Limiter.Failed(r)
 		// The response is deliberately identical for an unknown user and a
 		// wrong key: telling them apart would turn this into a username
 		// oracle. The log is a different audience — it is the operator's own
@@ -120,6 +132,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (string, b
 		writeError(w, http.StatusUnauthorized, 2001, "Unauthorized")
 		return "", false
 	}
+	s.Limiter.Succeeded(r)
 	return c.username, true
 }
 

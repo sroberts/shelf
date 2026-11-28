@@ -28,6 +28,12 @@ type fakeDevice struct {
 	files map[string][]byte
 	dirs  map[string]bool
 
+	// listFailsLike161 answers a missing folder the way firmware 1.6.1 does:
+	// 500 {"error":"Directory listing failed"} instead of 1.4.1's 200 [].
+	listFailsLike161 bool
+	// unreadable folders exist but fail to list, as a bad card would.
+	unreadable map[string]bool
+
 	// Failure injection.
 	failStatus   bool
 	failNextPost string // error string to return from the next mutating call
@@ -106,6 +112,12 @@ func (d *fakeDevice) handleFiles(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	if d.unreadable[dir] || (!d.dirs[dir] && d.listFailsLike161) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"Directory listing failed"}`))
+		return
+	}
 	if !d.dirs[dir] {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

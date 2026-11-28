@@ -59,6 +59,9 @@ func userAdd(a *app, args []string) error {
 	fs := newFlagSet("user add")
 	password := fs.String("password", "",
 		"password (prompted for if omitted; a flag is visible in ps and shell history)")
+	generate := fs.Bool("generate", false,
+		"make up a password that is easy to type on the reader and safe to expose through Funnel, and print it")
+	url := fs.String("url", "", "the address the reader reaches shelf at, such as a Funnel URL, for the printed setup")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -73,7 +76,13 @@ func userAdd(a *app, args []string) error {
 	}
 	defer store.Close()
 
+	if *generate && *password != "" {
+		return fmt.Errorf("%w: --generate and --password are alternatives", errUsage)
+	}
 	pw := *password
+	if *generate {
+		pw = kosync.GeneratePassword()
+	}
 	if pw == "" {
 		// Confirmed twice on purpose. A mistyped password here surfaces on the
 		// reader as a bare "Authentication failed", which says nothing about
@@ -95,7 +104,7 @@ func userAdd(a *app, args []string) error {
 	}
 
 	fmt.Printf("created %q\n\n", username)
-	printReaderInstructions(a, username)
+	printReaderInstructions(a, username, shownPassword(*generate, pw), *url)
 	return nil
 }
 
@@ -192,6 +201,8 @@ func userRemove(a *app, args []string) error {
 func userPasswd(a *app, args []string) error {
 	fs := newFlagSet("user passwd")
 	password := fs.String("password", "", "new password (prompted for if omitted)")
+	generate := fs.Bool("generate", false, "make up a new password and print it")
+	url := fs.String("url", "", "the address the reader reaches shelf at, for the printed setup")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -206,7 +217,13 @@ func userPasswd(a *app, args []string) error {
 	}
 	defer store.Close()
 
+	if *generate && *password != "" {
+		return fmt.Errorf("%w: --generate and --password are alternatives", errUsage)
+	}
 	pw := *password
+	if *generate {
+		pw = kosync.GeneratePassword()
+	}
 	if pw == "" {
 		if pw, err = promptNewPassword(); err != nil {
 			return err
@@ -220,43 +237,67 @@ func userPasswd(a *app, args []string) error {
 		return err
 	}
 	fmt.Printf("password changed for %q\n\n", username)
-	printReaderInstructions(a, username)
+	printReaderInstructions(a, username, shownPassword(*generate, pw), *url)
 	return nil
+}
+
+// shownPassword is the password to print: only one shelf made up. A password
+// the person typed is theirs already and stays off the screen.
+func shownPassword(generated bool, pw string) string {
+	if generated {
+		return pw
+	}
+	return ""
 }
 
 // printReaderInstructions says what to type into the device.
 //
 // The address matters as much as the credentials: the reader needs one it can
-// route to, and it must be http rather than https — shelf's server is plain
-// HTTP, and a TLS handshake against it fails before any credentials are read,
-// which the device reports as an authentication failure.
-func printReaderInstructions(a *app, username string) {
-	cfg, err := a.config()
-	port := "8080"
-	if err == nil && cfg.Kosync.Listen != "" {
-		if _, p, ok := strings.Cut(cfg.Kosync.Listen, ":"); ok && p != "" {
-			port = p
+// route to. On the LAN that is plain http to this machine, since shelf's own
+// listener speaks no TLS and a handshake against it fails before credentials
+// are read, which the device reports as an authentication failure. Through
+// Funnel (--url) it is the https address Tailscale terminates TLS at.
+func printReaderInstructions(a *app, username, password, url string) {
+	servers := []string{}
+	if url != "" {
+		servers = append(servers, strings.TrimRight(url, "/"))
+	} else {
+		cfg, err := a.config()
+		port := "8080"
+		if err == nil && cfg.Kosync.Listen != "" {
+			if _, p, ok := strings.Cut(cfg.Kosync.Listen, ":"); ok && p != "" {
+				port = p
+			}
+		}
+		hosts := lanAddresses()
+		if len(hosts) == 0 {
+			hosts = []string{"<this-machine>"}
+		}
+		for _, h := range hosts {
+			servers = append(servers, "http://"+h+":"+port)
 		}
 	}
 
-	fmt.Println("In the reader's KOReader sync settings:")
-	hosts := lanAddresses()
-	if len(hosts) == 0 {
-		fmt.Printf("    server:   http://<this-machine>:%s\n", port)
-	} else {
-		for i, h := range hosts {
-			label := "server:  "
-			if i > 0 {
-				label = "      or "
-			}
-			fmt.Printf("    %s http://%s:%s\n", label, h, port)
-		}
+	pwLine := "(what you just entered)"
+	if password != "" {
+		pwLine = password + "   (shown once; shelf keeps only a hash)"
 	}
-	fmt.Printf("    username: %s\n", username)
-	fmt.Println("    password: (what you just entered)")
+	fmt.Println("On the reader, under KOReader sync and OPDS servers:")
+	for i, srv := range servers {
+		label := "sync server:"
+		if i > 0 {
+			label = "         or:"
+		}
+		fmt.Printf("    %s %s\n", label, srv)
+	}
+	fmt.Printf("    OPDS:        %s/opds\n", servers[0])
+	fmt.Printf("    username:    %s\n", username)
+	fmt.Printf("    password:    %s\n", pwLine)
 	fmt.Println()
-	fmt.Println("Use http, not https. Log in rather than register — the account already exists.")
-	fmt.Println("The server must be running: shelf serve")
+	if url == "" {
+		fmt.Println("Use http, not https, on the LAN. For a reader outside the tailnet, pass --url with the Funnel address.")
+	}
+	fmt.Println("Log in rather than register: the account already exists. The server must be running: shelf serve")
 }
 
 // promptNewPassword reads a password twice without echoing it.

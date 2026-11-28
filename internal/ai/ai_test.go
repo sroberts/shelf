@@ -401,3 +401,38 @@ func TestClassifierStopsOnCancel(t *testing.T) {
 		t.Errorf("%d requests after cancel", n)
 	}
 }
+
+func TestCarryKeepsAnAnswerAcrossAnEdit(t *testing.T) {
+	s, err := OpenStore(filepath.Join(t.TempDir(), "ai.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SetGenre("old", "mystery", nil, "m"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetGenre("taken", "fantasy", nil, "m"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Carry("old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if g, ok := s.Genre("new"); !ok || g != "mystery" {
+		t.Errorf("carried genre = %q %v, want mystery", g, ok)
+	}
+	// An answer the new hash already has is not overwritten.
+	if err := s.Carry("old", "taken"); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := s.Genre("taken"); g != "fantasy" {
+		t.Errorf("existing answer replaced: %q", g)
+	}
+	// A book never asked about carries nothing.
+	if err := s.Carry("never", "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Genre("fresh"); ok {
+		t.Error("carried an answer that did not exist")
+	}
+}

@@ -23,11 +23,12 @@ import (
 	"github.com/sroberts/shelf/internal/mailbox"
 	"github.com/sroberts/shelf/internal/opds"
 	"github.com/sroberts/shelf/internal/outpost"
+	"github.com/sroberts/shelf/internal/ui"
 )
 
 var cmdServe = &command{
 	name:    "serve",
-	summary: "run the sync and OPDS catalog server",
+	summary: "run the web UI, API, MCP, OPDS catalog and progress sync server",
 	usage:   "serve [--listen ADDR | --port N] [--scan] [--no-registration] [--no-opds] [--open-catalog] [--no-ai] [--no-mail] [--verbose]",
 	run: func(ctx context.Context, a *app, args []string) error {
 		fs := newFlagSet("serve")
@@ -82,6 +83,10 @@ var cmdServe = &command{
 
 		srv := kosync.NewServer(store, logger)
 		srv.AllowRegistration = !*noRegistration
+		// One limiter for every password check, so guesses at the catalog,
+		// at progress sync and at the API all count against the same address.
+		limiter := kosync.NewLimiter()
+		srv.Limiter = limiter
 
 		// Every route shares one listener so the reader needs a single
 		// address for progress sync and for browsing. /opds goes to the
@@ -120,10 +125,15 @@ var cmdServe = &command{
 				}
 			}
 			user, password, ok := r.BasicAuth()
-			if ok && store.CheckPassword(user, password) == nil {
-				return user, true
+			if !ok || !limiter.Allowed(r) {
+				return "", false
 			}
-			return "", false
+			if store.CheckPassword(user, password) != nil {
+				limiter.Failed(r)
+				return "", false
+			}
+			limiter.Succeeded(r)
+			return user, true
 		}
 
 		var catalogPath string
@@ -137,6 +147,7 @@ var cmdServe = &command{
 			if !*openCatalog && !cfg.OPDS.Anonymous {
 				catalogSrv.Auth = store
 				catalogSrv.Identify = identify
+				catalogSrv.Limiter = limiter
 			}
 
 			root.Handle("/opds", catalogSrv.Handler())
@@ -176,19 +187,31 @@ var cmdServe = &command{
 		// Always authenticated, --open-catalog or not: unlike the catalog,
 		// the API can edit shelves.
 		svc := &api.Service{
-			DB:            db,
-			LibraryRoot:   cfg.LibraryRoot,
-			Progress:      store,
-			DefaultUser:   cfg.Kosync.User,
-			SaveShelves:   a.saveShelves,
-			ReloadShelves: func() error { return db.LoadShelves(cfg.Paths.ShelvesFile()) },
-			Version:       readVersion().String(),
+			DB:             db,
+			LibraryRoot:    cfg.LibraryRoot,
+			Progress:       store,
+			DefaultUser:    cfg.Kosync.User,
+			SaveShelves:    a.saveShelves,
+			ReloadShelves:  func() error { return db.LoadShelves(cfg.Paths.ShelvesFile()) },
+			Version:        readVersion().String(),
+			ImportTemplate: cfg.NamingTemplate,
+			// Uploads stage beside the library's other scratch files, in
+			// the cache: on the same volume as Outpost storage, so placing
+			// one into the library is a rename rather than a second copy.
+			StageDir: filepath.Join(cfg.Paths.Cache, "uploads"),
+			// Reader accounts: what the e-reader signs in with.
+			AccountDB: store,
 		}
 		if aiStore != nil {
 			svc.Genres = aiStore
 		}
 		apiSrv := api.NewServer(svc, authenticate, logger)
 		apiSrv.Realm = catalogTitle(cfg)
+		apiSrv.Info = api.Info{Auth: "basic"}
+		if identify != nil {
+			// Sign-out ends the whole Outpost login; the gateway owns it.
+			apiSrv.Info = api.Info{Auth: "gateway", LogoutURL: "/.outpost/logout"}
+		}
 		apiSrv.Mount(root)
 
 		// Mail (spec §16): newsletters sent to shelf's addresses become books.
@@ -209,7 +232,25 @@ var cmdServe = &command{
 			}
 		}
 
-		root.Handle("/", srv.Handler())
+		// kosync owns only its own paths; the web UI has everything else.
+		progressSync := srv.Handler()
+		root.Handle("/users/", progressSync)
+		root.Handle("/syncs/", progressSync)
+
+		// The web UI is a client of /v1 like any other. Its page needs a
+		// login too: a browser prompted here, on the first page, keeps the
+		// credentials for every API call the page then makes, where a 401
+		// from a script would leave it with nothing to show. Under the
+		// gateway the browser arrives already signed in.
+		webUI := ui.Handler(logger)
+		root.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := authenticate(r); !ok {
+				w.Header().Set("WWW-Authenticate", `Basic realm="`+strings.ReplaceAll(catalogTitle(cfg), `"`, "")+`", charset="UTF-8"`)
+				http.Error(w, "sign in with your shelf account", http.StatusUnauthorized)
+				return
+			}
+			webUI.ServeHTTP(w, r)
+		}))
 
 		httpSrv := &http.Server{
 			Addr:              listen,
@@ -251,6 +292,19 @@ var cmdServe = &command{
 		bgCtx, cancelBG := context.WithCancel(ctx)
 		defer cancelBG()
 
+		// Syncs started from the web UI or MCP run as jobs on bgCtx, and are
+		// waited for (deferred after the stores, so run before they close).
+		// Installed before Serve, so no request can see it half set up.
+		configFile := a.configPath
+		if configFile == "" {
+			configFile = cfg.Paths.ConfigFile()
+		}
+		svc.Sync = api.NewSyncService(bgCtx, cfg, configFile)
+		defer svc.Sync.Wait()
+		apiSrv.Info.Features = api.Features{
+			AI: classifier != nil, Mail: poller != nil, OPDS: catalogPath != "",
+		}
+
 		// enrich asks the classifier for a pass. Buffered and never blocking:
 		// a request while one is pending is the same request.
 		enrich := make(chan struct{}, 1)
@@ -271,6 +325,7 @@ var cmdServe = &command{
 		} else {
 			kick()
 		}
+		svc.OnImport = kick
 		if poller != nil {
 			poller.OnImport = kick
 			bg.Go(func() { poller.Run(bgCtx) })
@@ -516,7 +571,8 @@ func printServerBanner(addr net.Addr, storePath string, registration bool, catal
 		}
 	}
 
-	fmt.Println("\nAPI: /v1 (described at /v1/openapi.json); MCP: /mcp. Both take the same account.")
+	fmt.Printf("\nWeb UI: http://localhost:%s/ (the same account signs in)\n", port)
+	fmt.Println("API: /v1 (described at /v1/openapi.json); MCP: /mcp. Both take the same account.")
 	fmt.Println()
 	if registration {
 		fmt.Println("Registration is open, so the reader can create its account.")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -639,4 +640,48 @@ func TestBroadcastAddrsEnumeratesInterfaces(t *testing.T) {
 		}
 	}
 	t.Logf("broadcast addresses on this host: %v", addrs)
+}
+
+// Firmware 1.6.1 refuses to list a folder that does not exist, with the same
+// words a card that cannot be read would produce. A sync to a fresh card must
+// see the missing root as empty and create it; a real read failure must not be
+// mistaken for an empty folder, or a sync would re-upload over books it could
+// not see.
+func TestListMissingFolderOn161IsEmpty(t *testing.T) {
+	d := newFakeDevice(t)
+	d.listFailsLike161 = true
+	d.addFile("/Dune.epub", []byte("x"))
+
+	fixture, err := os.ReadFile("testdata/files_missing_1.6.1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(ParseDeviceError(string(fixture)), ErrListFailed) {
+		t.Fatalf("captured 1.6.1 body %q does not map to ErrListFailed", fixture)
+	}
+
+	files, err := d.client().ListRecursive(context.Background(), NewPath("/Books"))
+	if err != nil || len(files) != 0 {
+		t.Fatalf("missing /Books: %d files, %v; want empty and no error", len(files), err)
+	}
+	if _, err := d.client().List(context.Background(), NewPath("/Books/Author")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("nested missing folder: %v, want ErrNotFound", err)
+	}
+}
+
+func TestListUnreadableFolderIsAnError(t *testing.T) {
+	d := newFakeDevice(t)
+	d.listFailsLike161 = true
+	d.addFile("/Books/Dune.epub", []byte("x"))
+	d.unreadable = map[string]bool{"/Books": true}
+
+	_, err := d.client().ListRecursive(context.Background(), NewPath("/Books"))
+	if !errors.Is(err, ErrListFailed) {
+		t.Fatalf("unreadable /Books: %v, want ErrListFailed", err)
+	}
+	// The folder's name differs only in case from what the parent shows:
+	// FAT32 is case-insensitive, so it is the same folder and still an error.
+	if _, err := d.client().List(context.Background(), NewPath("/books")); errors.Is(err, ErrNotFound) {
+		t.Errorf("/books matched /Books case-insensitively but was reported missing")
+	}
 }

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sroberts/shelf/internal/library"
 )
@@ -31,6 +32,38 @@ type Server struct {
 	log  *slog.Logger
 	// Realm names the API in a browser's credential prompt.
 	Realm string
+	// Info describes the deployment to clients, at /v1/me.
+	Info Info
+}
+
+// Info is what a client needs to know about how shelf is running.
+type Info struct {
+	// Auth is how callers sign in: "gateway" (Outpost's login), "basic"
+	// (shelf's own accounts) or "open".
+	Auth string `json:"auth"`
+	// LogoutURL is where a same-origin POST signs out, under the gateway.
+	LogoutURL string   `json:"logout_url,omitempty"`
+	Features  Features `json:"features"`
+}
+
+// Features says which optional parts are on.
+type Features struct {
+	AI       bool `json:"ai"`
+	Mail     bool `json:"mail"`
+	OPDS     bool `json:"opds"`
+	Sync     bool `json:"sync"`
+	Upload   bool `json:"upload"`
+	Progress bool `json:"progress"`
+	Accounts bool `json:"accounts"`
+}
+
+// Me is GET /v1/me.
+type Me struct {
+	User string `json:"user"`
+	Info
+	Version string `json:"version,omitempty"`
+	// ProgressUser is whose reading progress books carry by default.
+	ProgressUser string `json:"progress_user"`
 }
 
 // NewServer builds the HTTP front ends. A nil auth leaves them open, which a
@@ -53,19 +86,36 @@ type route struct {
 
 var routes = []route{
 	{"GET", "/v1/openapi.json", true, (*Server).openAPI},
+	{"GET", "/v1/me", false, (*Server).me},
 	{"GET", "/v1/books", false, (*Server).listBooks},
+	{"POST", "/v1/books", false, (*Server).uploadBooks},
 	{"GET", "/v1/books/{id}", false, (*Server).getBook},
+	{"PATCH", "/v1/books/{id}", false, (*Server).patchBook},
 	{"GET", "/v1/books/{id}/file", false, (*Server).getBookFile},
+	{"GET", "/v1/books/{id}/cover", false, (*Server).getCover},
 	{"GET", "/v1/authors", false, (*Server).listAuthors},
 	{"GET", "/v1/series", false, (*Server).listSeries},
 	{"GET", "/v1/tags", false, (*Server).listTags},
 	{"GET", "/v1/genres", false, (*Server).listGenres},
 	{"GET", "/v1/shelves", false, (*Server).listShelves},
+	{"POST", "/v1/shelves", false, (*Server).createShelf},
 	{"GET", "/v1/shelves/{name}", false, (*Server).getShelf},
+	{"DELETE", "/v1/shelves/{name}", false, (*Server).deleteShelf},
 	{"POST", "/v1/shelves/{name}/books", false, (*Server).addToShelf},
 	{"DELETE", "/v1/shelves/{name}/books/{id}", false, (*Server).removeFromShelf},
 	{"GET", "/v1/stats", false, (*Server).stats},
 	{"GET", "/v1/progress", false, (*Server).progress},
+	{"DELETE", "/v1/progress/{id}", false, (*Server).clearProgress},
+	{"GET", "/v1/accounts", false, (*Server).listAccounts},
+	{"POST", "/v1/accounts", false, (*Server).createAccount},
+	{"POST", "/v1/accounts/{name}/password", false, (*Server).resetPassword},
+	{"DELETE", "/v1/accounts/{name}", false, (*Server).deleteAccount},
+	{"GET", "/v1/devices", false, (*Server).listDevices},
+	{"POST", "/v1/devices", false, (*Server).addDevice},
+	{"POST", "/v1/devices/{name}/sync", false, (*Server).startSync},
+	{"GET", "/v1/jobs", false, (*Server).listJobs},
+	{"GET", "/v1/jobs/{id}", false, (*Server).getJob},
+	{"DELETE", "/v1/jobs/{id}", false, (*Server).cancelJob},
 }
 
 // Mount registers /v1/* and /mcp on mux.
@@ -150,6 +200,9 @@ func (s *Server) getBookFile(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	defer f.Close()
+	// The server's write timeout suits API calls, not a 200 MB PDF over a
+	// phone's connection; a download gets the time it needs.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferTimeout))
 	info, err := f.Stat()
 	if err != nil {
 		s.fail(w, r, err)
@@ -202,22 +255,31 @@ func (s *Server) getShelf(w http.ResponseWriter, r *http.Request, user string) {
 }
 
 func (s *Server) addToShelf(w http.ResponseWriter, r *http.Request, _ string) {
-	// A JSON content type cannot be sent by a plain HTML form, so requiring
-	// it closes the form-CSRF route on top of the Origin check.
-	if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
-		writeError(w, http.StatusUnsupportedMediaType, "send application/json")
-		return
-	}
 	var body struct {
 		IDs []int64 `json:"ids"`
 	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	if err := dec.Decode(&body); err != nil {
-		s.fail(w, r, badRequest("body must be {\"ids\": [1, 2]}"))
+	if !s.decodeBody(w, r, &body, `body must be {"ids": [1, 2]}`) {
 		return
 	}
 	res, err := s.svc.AddToShelf(r.PathValue("name"), body.IDs)
 	s.respond(w, r, res, err)
+}
+
+// decodeBody reads a JSON request body into v. A JSON content type cannot be
+// sent by a plain HTML form, so requiring it closes the form-CSRF route on top
+// of the Origin check.
+func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, v any, hint string) bool {
+	if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "send application/json")
+		return false
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		s.fail(w, r, badRequest("%s (%v)", hint, err))
+		return false
+	}
+	return true
 }
 
 func (s *Server) removeFromShelf(w http.ResponseWriter, r *http.Request, _ string) {
@@ -264,11 +326,18 @@ func (s *Server) respond(w http.ResponseWriter, r *http.Request, v any, err erro
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
+	var busy *BusyError
 	switch {
+	case errors.As(err, &busy):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "job": busy.Job})
+	case errors.Is(err, ErrConflict):
+		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrBadRequest):
-		writeError(w, http.StatusBadRequest, err.Error())
+		// The sentinel's own text says nothing a person can act on; the
+		// detail after it does.
+		writeError(w, http.StatusBadRequest, strings.TrimPrefix(err.Error(), ErrBadRequest.Error()+": "))
 	default:
 		s.log.Error("api request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

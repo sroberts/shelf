@@ -114,6 +114,57 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         }
+      },
+      "post": {
+        "operationId": "uploadBooks",
+        "summary": "Add files to the library",
+        "description": "Each file is placed by the naming template, as `shelf import --move` does. A file already in the library is refused, not duplicated. At most 512 MiB per request.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "description": "the upload is too large"
+          },
+          "415": {
+            "description": "the body was not multipart/form-data"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
       }
     },
     "/v1/books/{id}": {
@@ -159,6 +210,56 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateBook",
+        "summary": "Edit an EPUB's metadata",
+        "description": "Written into the file; the file does not move, so the book keeps its place on the reader. Its sha256 changes.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Book"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "415": {
+            "description": "the body was not application/json"
           }
         }
       }
@@ -357,6 +458,57 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         }
+      },
+      "post": {
+        "operationId": "createShelf",
+        "summary": "Create a shelf",
+        "description": "With a query, a saved search; without one, a manual shelf.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "query": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Shelf"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "415": {
+            "description": "the body was not application/json"
+          }
+        }
       }
     },
     "/v1/shelves/{name}": {
@@ -391,6 +543,31 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteShelf",
+        "summary": "Delete a shelf's definition; its books stay",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "deleted"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -565,6 +742,562 @@
           }
         }
       }
+    },
+    "/v1/me": {
+      "get": {
+        "operationId": "me",
+        "summary": "Who is calling, and which features this server has on",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/books/{id}/cover": {
+      "get": {
+        "operationId": "getCover",
+        "summary": "A book's cover image",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the image",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/progress/{id}": {
+      "delete": {
+        "operationId": "clearProgress",
+        "summary": "Forget shelf's stored reading position for a book",
+        "description": "The reader keeps its own position and sends it again the next time the book is open with sync on.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "user",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "whose reading progress; defaults to the caller or the configured user"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "cleared"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/devices": {
+      "get": {
+        "operationId": "listDevices",
+        "summary": "The configured readers",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "devices"
+                  ],
+                  "properties": {
+                    "devices": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Device"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "addDevice",
+        "summary": "Add a Wi-Fi reader",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "host"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "host": {
+                    "type": "string"
+                  },
+                  "root": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Device"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "415": {
+            "description": "the body was not application/json"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/devices/{name}/sync": {
+      "post": {
+        "operationId": "startSync",
+        "summary": "Start a sync job",
+        "description": "Plans (dry_run) or runs a sync of a shelf, or the whole library, to the reader. Poll the job. Books already on the reader never move.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shelf": {
+                    "type": "string"
+                  },
+                  "prune": {
+                    "type": "boolean"
+                  },
+                  "dry_run": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "415": {
+            "description": "the body was not application/json"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "409": {
+            "description": "a sync to this device is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "job"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "job": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "summary": "Recent sync jobs, newest first",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "jobs"
+                  ],
+                  "properties": {
+                    "jobs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Job"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}": {
+      "get": {
+        "operationId": "getJob",
+        "summary": "A sync job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancelJob",
+        "summary": "Cancel a sync job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "cancelling",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/accounts": {
+      "get": {
+        "operationId": "listAccounts",
+        "summary": "Reader accounts, for progress sync and the OPDS catalog",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "accounts"
+                  ],
+                  "properties": {
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Account"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAccount",
+        "summary": "Create a reader account",
+        "description": "Without a password, shelf generates one that is easy to type on the reader and strong enough for the internet; it is returned once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 10,
+                    "description": "omit to have shelf generate one"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "415": {
+            "description": "the body was not application/json"
+          }
+        }
+      }
+    },
+    "/v1/accounts/{name}/password": {
+      "post": {
+        "operationId": "resetPassword",
+        "summary": "Give a reader account a new password",
+        "description": "Reading positions are kept; the reader signs in again.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "minLength": 10,
+                    "description": "omit to have shelf generate one"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "415": {
+            "description": "the body was not application/json"
+          }
+        }
+      }
+    },
+    "/v1/accounts/{name}": {
+      "delete": {
+        "operationId": "deleteAccount",
+        "summary": "Delete a reader account and its reading positions",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -577,7 +1310,7 @@
       "outpost": {
         "type": "http",
         "scheme": "bearer",
-        "description": "an Outpost personal access token (opat_…), when shelf runs behind Outpost's login gateway"
+        "description": "an Outpost personal access token (opat_\u2026), when shelf runs behind Outpost's login gateway"
       }
     },
     "responses": {
@@ -610,6 +1343,26 @@
             }
           }
         }
+      },
+      "Conflict": {
+        "description": "conflicts with what exists",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "this feature is off on this server",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
       }
     },
     "schemas": {
@@ -635,7 +1388,8 @@
           "size",
           "tags",
           "sha256",
-          "added_unix"
+          "added_unix",
+          "has_cover"
         ],
         "properties": {
           "id": {
@@ -710,6 +1464,16 @@
             "type": "number",
             "minimum": 0,
             "maximum": 100
+          },
+          "description": {
+            "type": "string",
+            "description": "plain text; markup is removed"
+          },
+          "has_cover": {
+            "type": "boolean"
+          },
+          "reading": {
+            "$ref": "#/components/schemas/Reading"
           }
         }
       },
@@ -877,6 +1641,430 @@
                 }
               }
             }
+          }
+        }
+      },
+      "Reading": {
+        "type": "object",
+        "required": [
+          "percent",
+          "updated_unix"
+        ],
+        "properties": {
+          "percent": {
+            "type": "number"
+          },
+          "device": {
+            "type": "string"
+          },
+          "updated_unix": {
+            "type": "integer"
+          }
+        }
+      },
+      "Me": {
+        "type": "object",
+        "required": [
+          "user",
+          "auth",
+          "features",
+          "progress_user"
+        ],
+        "properties": {
+          "user": {
+            "type": "string"
+          },
+          "auth": {
+            "type": "string",
+            "enum": [
+              "gateway",
+              "basic",
+              "open"
+            ]
+          },
+          "logout_url": {
+            "type": "string",
+            "description": "under Outpost's gateway: POST a same-origin form here to sign out"
+          },
+          "version": {
+            "type": "string"
+          },
+          "progress_user": {
+            "type": "string"
+          },
+          "features": {
+            "type": "object",
+            "required": [
+              "ai",
+              "mail",
+              "opds",
+              "sync",
+              "upload",
+              "progress",
+              "accounts"
+            ],
+            "properties": {
+              "ai": {
+                "type": "boolean"
+              },
+              "mail": {
+                "type": "boolean"
+              },
+              "opds": {
+                "type": "boolean"
+              },
+              "sync": {
+                "type": "boolean"
+              },
+              "upload": {
+                "type": "boolean"
+              },
+              "progress": {
+                "type": "boolean"
+              },
+              "accounts": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "BookPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "description": "fields to change; omitted fields are left alone, an empty list clears authors or tags",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series": {
+            "type": "string"
+          },
+          "series_index": {
+            "type": "number"
+          },
+          "language": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "pubdate": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ImportResult": {
+        "type": "object",
+        "required": [
+          "imported",
+          "failed"
+        ],
+        "properties": {
+          "imported": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Book"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "error"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "required": [
+          "name",
+          "transport",
+          "root",
+          "default",
+          "books"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string",
+            "enum": [
+              "ws",
+              "http",
+              "sd"
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "mount": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "last_sync_unix": {
+            "type": "integer"
+          },
+          "books": {
+            "type": "integer",
+            "description": "books shelf has placed on it"
+          },
+          "job": {
+            "type": "string",
+            "description": "id of a sync running to it now"
+          }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "device",
+          "shelf",
+          "dry_run",
+          "prune",
+          "state",
+          "started_unix",
+          "notes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sync"
+            ]
+          },
+          "device": {
+            "type": "string"
+          },
+          "shelf": {
+            "type": "string",
+            "description": "empty for the whole library"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "prune": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "planning",
+              "running",
+              "done",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "started_unix": {
+            "type": "integer"
+          },
+          "finished_unix": {
+            "type": "integer"
+          },
+          "plan": {
+            "type": "object",
+            "required": [
+              "uploads",
+              "deletes",
+              "moves",
+              "mkdirs",
+              "unchanged",
+              "total_bytes",
+              "orphans",
+              "warnings",
+              "ops"
+            ],
+            "properties": {
+              "uploads": {
+                "type": "integer"
+              },
+              "deletes": {
+                "type": "integer"
+              },
+              "moves": {
+                "type": "integer"
+              },
+              "mkdirs": {
+                "type": "integer"
+              },
+              "unchanged": {
+                "type": "integer"
+              },
+              "total_bytes": {
+                "type": "integer"
+              },
+              "orphans": {
+                "type": "integer"
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "ops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "path"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "mkdir",
+                        "upload",
+                        "delete",
+                        "move"
+                      ]
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              },
+              "sent": {
+                "type": "integer"
+              },
+              "size": {
+                "type": "integer"
+              },
+              "bytes_sent": {
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          },
+          "result": {
+            "type": "object",
+            "required": [
+              "completed",
+              "failed",
+              "skipped",
+              "bytes_sent",
+              "errors"
+            ],
+            "properties": {
+              "completed": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              },
+              "skipped": {
+                "type": "integer"
+              },
+              "bytes_sent": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "required": [
+          "name",
+          "books"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "created_unix": {
+            "type": "integer"
+          },
+          "books": {
+            "type": "integer",
+            "description": "books with a reading position"
+          },
+          "password": {
+            "type": "string",
+            "description": "only in the response that created or reset the account, and only when shelf generated it; never shown again"
           }
         }
       }

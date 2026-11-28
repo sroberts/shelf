@@ -2,8 +2,12 @@ package kosync
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func newStore(t *testing.T) *Store {
@@ -213,5 +217,85 @@ func TestStoreToleratesASecondConnection(t *testing.T) {
 	}
 	if err := serving.Authenticate("reader", PasswordKey("pw")); err != nil {
 		t.Errorf("first connection did not see the new account: %v", err)
+	}
+}
+
+func TestDeleteProgressForgetsOneDocument(t *testing.T) {
+	store := newStore(t)
+	for _, doc := range []string{"keep", "drop"} {
+		if _, err := store.PutProgress("reader", Progress{Document: doc, Percentage: 0.3}); err != nil {
+			t.Fatalf("put %s: %v", doc, err)
+		}
+	}
+
+	// The username is normalised (trimmed) like every other store call.
+	if err := store.DeleteProgress(" reader ", "drop"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := store.GetProgress("reader", "drop"); !errors.Is(err, ErrNoProgress) {
+		t.Errorf("dropped document still has progress: %v", err)
+	}
+	if _, err := store.GetProgress("reader", "keep"); err != nil {
+		t.Errorf("other document lost its progress: %v", err)
+	}
+	if err := store.DeleteProgress("reader", "drop"); !errors.Is(err, ErrNoProgress) {
+		t.Errorf("second delete = %v, want ErrNoProgress", err)
+	}
+}
+
+func TestGeneratedPasswordsAreTypeableAndDistinct(t *testing.T) {
+	seen := map[string]bool{}
+	for range 200 {
+		p := GeneratePassword()
+		if len(p) != 19 || strings.Count(p, "-") != 3 {
+			t.Fatalf("shape of %q", p)
+		}
+		for _, c := range strings.ReplaceAll(p, "-", "") {
+			if !strings.ContainsRune(passwordAlphabet, c) {
+				t.Fatalf("%q has %q, outside the alphabet", p, c)
+			}
+		}
+		if seen[p] {
+			t.Fatalf("repeated %q", p)
+		}
+		seen[p] = true
+	}
+}
+
+func TestLimiterRefusesAnAddressNotAnAccount(t *testing.T) {
+	l := NewLimiter()
+	now := time.Unix(1_700_000_000, 0)
+	l.now = func() time.Time { return now }
+	from := func(remote, fwd string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = remote
+		if fwd != "" {
+			r.Header.Set("X-Forwarded-For", fwd)
+		}
+		return r
+	}
+	attacker := from("127.0.0.1:5000", "203.0.113.9")
+	reader := from("127.0.0.1:5001", "198.51.100.4")
+
+	for range l.Max {
+		if !l.Allowed(attacker) {
+			t.Fatal("refused before the limit")
+		}
+		l.Failed(attacker)
+	}
+	if l.Allowed(attacker) {
+		t.Error("allowed past the limit")
+	}
+	// Another address, through the same proxy, is unaffected.
+	if !l.Allowed(reader) {
+		t.Error("the reader was locked out by someone else's guesses")
+	}
+	// A client connecting directly cannot pick its own address.
+	if got := ClientIP(from("192.0.2.7:1234", "198.51.100.4")); got != "192.0.2.7" {
+		t.Errorf("X-Forwarded-For believed from a non-loopback peer: %s", got)
+	}
+	now = now.Add(l.Window + time.Second)
+	if !l.Allowed(attacker) {
+		t.Error("still refused after the window")
 	}
 }

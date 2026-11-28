@@ -177,3 +177,24 @@ func TestEpubCheckValidatesSimpleBook(t *testing.T) {
 		}
 	}
 }
+
+// The mimetype entry must carry no zip extra field (epubcheck PKG-005). A
+// non-zero Modified time makes archive/zip add one, so this is checked here
+// directly rather than only when epubcheck happens to be installed.
+func TestSimpleBookMimetypeHasNoExtraField(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteSimple(&buf, SimpleBook{Title: "T", Date: time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)}); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := zr.File[0]
+	if first.Name != "mimetype" || first.Method != zip.Store {
+		t.Fatalf("first entry %q method %d; want stored mimetype", first.Name, first.Method)
+	}
+	if len(first.Extra) != 0 {
+		t.Errorf("mimetype has a %d-byte extra field", len(first.Extra))
+	}
+}

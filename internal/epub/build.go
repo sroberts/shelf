@@ -60,9 +60,12 @@ func WriteSimple(w io.Writer, b SimpleBook) error {
 		return err
 	}
 
-	// The OCF spec requires mimetype first and stored, so a reader can
-	// identify the file by its leading bytes.
-	if err := add("mimetype", zip.Store, []byte("application/epub+zip")); err != nil {
+	// The OCF spec requires mimetype first, stored, and with no zip extra
+	// field, so a reader can identify the file by its leading bytes. That
+	// last rule is why it does not go through add: a Modified time makes
+	// archive/zip attach an extended-timestamp extra field. writeMimetype
+	// leaves the time zero, which is just as deterministic.
+	if err := writeMimetype(zw); err != nil {
 		return err
 	}
 	if err := add("META-INF/container.xml", zip.Deflate, []byte(simpleContainerXML)); err != nil {

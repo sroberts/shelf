@@ -5,8 +5,10 @@
 export const FILTERS = ['author', 'series', 'tag', 'format'];
 
 export const SORTS = [
-  { value: '', label: 'Title' },
-  { value: 'author', label: 'Author' },
+  // '' is the server's default order, which is by author then series: the
+  // label must say what the list actually shows.
+  { value: '', label: 'Author' },
+  { value: 'title', label: 'Title' },
   { value: 'series', label: 'Series' },
   { value: 'added', label: 'Date added' },
   { value: 'modified', label: 'Last changed' },

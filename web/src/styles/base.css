@@ -255,13 +255,30 @@ textarea:focus {
   }
 
   .btn.small {
-    min-height: 2.5rem;
+    min-height: 2.75rem;
+  }
+
+  .btn.icon {
+    min-width: 2.75rem;
+  }
+
+  .check {
+    min-height: 2.75rem;
+    padding-top: 0.6rem;
   }
 
   .check input {
-    width: 1.3rem;
-    height: 1.3rem;
-    margin-top: 0.1rem;
+    width: 1.35rem;
+    height: 1.35rem;
+    margin-top: 0;
+  }
+
+  summary,
+  summary[class],
+  .back {
+    min-height: 2.75rem !important; /* page styles set their own, smaller */
+    display: flex;
+    align-items: center;
   }
 }
 
@@ -274,6 +291,11 @@ textarea:focus {
 
 .muted {
   color: var(--muted);
+}
+
+/* Code sits on the darker chip, where muted text falls to 4.2:1. */
+.muted code {
+  color: var(--ink-2);
 }
 
 .small {

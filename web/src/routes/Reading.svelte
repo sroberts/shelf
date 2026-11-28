@@ -14,7 +14,6 @@
   const user = $derived(new URLSearchParams(route.search).get('user') || '');
   let list = $state(null);
   let error = $state('');
-  let other = $state('');
   let clearing = $state(null);
   let confirmOpen = $state(false);
 
@@ -48,10 +47,12 @@
     }
   }
 
-  function showUser(e) {
-    e.preventDefault();
-    navigate(`/reading${other.trim() ? `?user=${encodeURIComponent(other.trim())}` : ''}`);
-  }
+  // The accounts are known, so the switcher offers them rather than asking
+  // for a name to be remembered; with one account there is nothing to switch.
+  let accounts = $state([]);
+  $effect(() => {
+    api.accounts().then((a) => (accounts = a)).catch(() => {});
+  });
 </script>
 
 <h1>Reading</h1>
@@ -60,13 +61,14 @@
   Positions arrive when the reader syncs progress to this server.
 </p>
 
-<form class="who row" onsubmit={showUser}>
-  <label class="field">
+{#if accounts.length > 1}
+  <label class="field who">
     <span>Reader account</span>
-    <input type="text" bind:value={other} placeholder={list?.user || session.me?.progress_user || 'kosync user'} autocomplete="off" spellcheck="false" />
+    <select value={list?.user || ''} onchange={(e) => navigate(`/reading?user=${encodeURIComponent(e.currentTarget.value)}`)}>
+      {#each accounts as a (a.name)}<option value={a.name}>{a.name}</option>{/each}
+    </select>
   </label>
-  <button class="btn">Show</button>
-</form>
+{/if}
 
 {#if error}
   <div class="notice error">{error}</div>
@@ -74,7 +76,7 @@
   <Loading />
 {:else if !list.books.length}
   <Empty title="Nothing opened yet">
-    <p>Turn on progress sync on the reader, pointed at this server, with a shelf account (<code>shelf user add</code>). Each book you open then shows up here.</p>
+    <p>Turn on KOReader sync on the reader, pointed at this server, and log in with a reader account (make one under <a href="/devices">Readers → Reader accounts</a>). Each book you open then shows up here.</p>
   </Empty>
 {:else}
   {#each [['Reading now', current], ['Finished', finished]] as [heading, entries] (heading)}
@@ -105,7 +107,7 @@
 <Confirm
   bind:open={confirmOpen}
   title="Clear this position?"
-  body="Shelf forgets where you were in {clearing?.book.title ?? 'this book'}. The reader keeps its own position and sends it again the next time the book is open with sync on, so this is for clearing out stale entries."
+  body="shelf forgets where you were in {clearing?.book.title ?? 'this book'}. The reader keeps its own position and sends it again the next time the book is open with sync on, so this is for clearing out stale entries."
   confirmLabel="Clear position"
   danger
   onconfirm={clear}
@@ -119,14 +121,8 @@
   }
 
   .who {
-    align-items: flex-end;
     margin-bottom: 1.75rem;
-    max-width: 26rem;
-    flex-wrap: nowrap;
-  }
-
-  .who .field {
-    flex: 1;
+    max-width: 20rem;
   }
 
   section {

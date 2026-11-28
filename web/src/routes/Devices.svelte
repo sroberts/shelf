@@ -217,6 +217,8 @@
     return `${stateLabel(job)}.`;
   }
 
+  // History is of syncs that ran; previews are read on each reader's card.
+  const syncs = $derived(jobs.filter((j) => !j.dry_run));
   const showForm = $derived(adding || (devices !== null && !devices.length));
 </script>
 
@@ -264,9 +266,7 @@
             <button class="btn" class:primary={!matched} onclick={() => start(dev, true)} disabled={isActive(job)}>
               <Eye size={17} /> {matched ? 'Preview again' : 'Preview'}
             </button>
-            {#if !c.prune && !matched}
-              <button class="btn" onclick={() => start(dev, false)} disabled={isActive(job)}><Send size={17} /> Sync without preview</button>
-            {/if}
+
           </div>
         </div>
 
@@ -276,6 +276,10 @@
             <input type="checkbox" bind:checked={c.prune} disabled={isActive(job)} />
             <span>Also remove books that aren’t in {c.shelf ? `“${c.shelf}”` : 'the library'}<br /><span class="muted small">Deletes them from the reader, with their reading positions. You’ll see the list and confirm first.</span></span>
           </label>
+          {#if !c.prune && !matched}
+            <!-- Kept out of the main row: previewing first is the habit the page teaches. -->
+            <button class="btn small skip-preview" onclick={() => start(dev, false)} disabled={isActive(job)}><Send size={15} /> Sync without preview</button>
+          {/if}
           {#if c.prune && !matched}
             <p class="notice warn small"><TriangleAlert size={16} aria-hidden="true" /><span>Preview to see which books would be deleted. Nothing is removed until you confirm.</span></p>
           {/if}
@@ -318,7 +322,7 @@
             {#each job.plan.warnings || [] as w (w)}<p class="notice warn small"><TriangleAlert size={16} aria-hidden="true" /><span>{w}</span></p>{/each}
             {#if view.items.length}
               <details class="plan">
-                <summary>Show the {view.items.length === 1 ? 'book' : `${view.items.length} books`}{job.plan.total_bytes ? ` (${bytes(job.plan.total_bytes)})` : ''}</summary>
+                <summary><ChevronDown size={16} aria-hidden="true" /> Show the {view.items.length === 1 ? 'book' : `${view.items.length} books`}{job.plan.total_bytes ? ` (${bytes(job.plan.total_bytes)})` : ''}</summary>
                 <ul class="ops">
                   {#each view.items as op, i (i)}
                     <li>
@@ -390,11 +394,11 @@
 
 {#if feature('accounts')}<ReaderAccounts />{/if}
 
-{#if jobs.length}
+{#if syncs.length}
   <section class="history" aria-labelledby="history-title">
     <h2 id="history-title">Recent syncs</h2>
     <ul>
-      {#each jobs.slice(0, 12) as j (j.id)}
+      {#each syncs.slice(0, 12) as j (j.id)}
         <li>
           <span class="state {j.state}">{stateLabel(j)}</span>
           <span class="h-reader">{j.device}</span>
@@ -593,6 +597,19 @@
     display: none;
   }
 
+  .plan summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .plan summary :global(svg) {
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transform: rotate(-90deg);
+  }
+
+  .plan[open] summary :global(svg) {
+    transform: none;
+  }
+
   .more summary :global(svg) {
     transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     transform: rotate(-90deg);
@@ -604,6 +621,11 @@
 
   .more .check {
     max-width: 40rem;
+  }
+
+  .skip-preview {
+    justify-self: start;
+    width: fit-content;
   }
 
   .notice.warn {
@@ -671,6 +693,12 @@
     min-width: 2rem;
   }
 
+  @media (pointer: coarse) {
+    .icon-only {
+      min-width: 2.75rem;
+    }
+  }
+
   .summary {
     margin: 0;
     font-weight: 550;
@@ -728,6 +756,8 @@
   }
 
   .plan summary {
+    list-style: none;
+    gap: 0.35rem;
     cursor: pointer;
     font-weight: 600;
     font-size: 0.9rem;

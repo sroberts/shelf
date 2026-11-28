@@ -195,7 +195,12 @@
       <input bind:this={picker} type="file" accept={ACCEPT} multiple hidden onchange={(e) => { send(e.currentTarget.files); e.currentTarget.value = ''; }} />
     {/if}
   </div>
-  {#if session.stats}<p class="count">{session.stats.books} {session.stats.books === 1 ? 'book' : 'books'}</p>{/if}
+  {#if session.stats}
+    <!-- Filtered, the count is of what is shown, against the whole library. -->
+    <p class="count">
+      {#if isFiltered(filters) && !loading}{books.length}{more ? '+' : ''} of {session.stats.books} books{:else}{session.stats.books} {session.stats.books === 1 ? 'book' : 'books'}{/if}
+    </p>
+  {/if}
 
   <form class="search" role="search" onsubmit={(e) => { e.preventDefault(); clearTimeout(timer); set({ q: text.trim() }); }}>
     <label class="box">
@@ -212,9 +217,15 @@
     <div class="filters" role="group" aria-label="Filter the library">
       {#snippet pick(key, label, any, items, show = (v) => v)}
         <label class="pill" class:on={filters[key]}>
-          <span class="visually-hidden">{label}</span>
+          <!-- A set pill still names what it narrows: "Author: Lena Ostrova". -->
+          {#if filters[key]}<span class="dim">{label}:</span>{:else}<span class="visually-hidden">{label}</span>{/if}
           <select value={filters[key]} onchange={(e) => set({ [key]: e.currentTarget.value })}>
             <option value="">{any}</option>
+            {#if filters[key] && !items.some((o) => o.value === filters[key])}
+              <!-- A link can filter by a value the list spells differently (an
+                   author's name rather than its sort form); show it as chosen. -->
+              <option value={filters[key]}>{show(filters[key])}</option>
+            {/if}
             {#each items as o (o.value)}<option value={o.value}>{show(o.value)} ({o.count})</option>{/each}
           </select>
           <ChevronDown size={14} aria-hidden="true" />
@@ -452,6 +463,15 @@
     color: var(--accent-ink);
   }
 
+  .dim {
+    padding-left: 0.85rem;
+    margin-right: -0.55rem;
+    font-size: var(--text-meta);
+    font-weight: 450;
+    opacity: 0.75;
+    white-space: nowrap;
+  }
+
   .pill.on :global(svg) {
     opacity: 0.85;
   }
@@ -532,7 +552,7 @@
 
     .seg button {
       width: 2.75rem;
-      height: 2.5rem;
+      height: 2.75rem;
     }
   }
 

@@ -204,7 +204,9 @@ func (c *Client) Ping(ctx context.Context) error {
 // List returns the contents of a device directory.
 //
 // A missing directory is not an error on real hardware: firmware 1.4.1 answers
-// 200 with an empty array rather than 404. The 404 branch below is kept for
+// 200 with an empty array rather than 404, and 1.6.1 answers 500 "Directory
+// listing failed", which List turns into ErrNotFound only after the parent
+// confirms the folder is absent. The 404 branch below is kept for
 // other firmware revisions, but callers must not rely on ErrNotFound to detect
 // a missing directory -- use Stat against the parent instead.
 func (c *Client) List(ctx context.Context, p Path) ([]FileEntry, error) {
@@ -225,6 +227,11 @@ func (c *Client) List(ctx context.Context, p Path) ([]FileEntry, error) {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, p)
 	}
 	if err := checkHTTPStatus(resp); err != nil {
+		if errors.Is(err, ErrListFailed) && p.String() != "/" {
+			if missing, merr := c.missingFromParent(ctx, p); merr == nil && missing {
+				return nil, fmt.Errorf("%w: %s", ErrNotFound, p)
+			}
+		}
 		return nil, fmt.Errorf("list %s: %w", p, err)
 	}
 
@@ -233,6 +240,30 @@ func (c *Client) List(ctx context.Context, p Path) ([]FileEntry, error) {
 		return nil, fmt.Errorf("decode listing of %s: %w", p, err)
 	}
 	return entries, nil
+}
+
+// missingFromParent reports whether p is absent from its parent's listing.
+//
+// Firmware 1.6.1 refuses to list a missing folder with the same words it would
+// use for a card that cannot be read. Asking the parent tells the two apart: a
+// folder the parent does not show is missing, which a sync treats as empty and
+// creates; anything else is a real failure and is reported as one. A missing
+// parent makes its child missing too, since List recurses through this check.
+func (c *Client) missingFromParent(ctx context.Context, p Path) (bool, error) {
+	entries, err := c.List(ctx, p.Dir())
+	if errors.Is(err, ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	name := p.Base()
+	for _, e := range entries {
+		if e.IsDirectory && strings.EqualFold(e.Name, name) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // ListRecursive walks a device directory tree, returning every file with its

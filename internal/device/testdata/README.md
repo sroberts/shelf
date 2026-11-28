@@ -16,6 +16,7 @@ re-capturing.
 | `files_root.json` | `GET /api/files?path=/` |
 | `files_subdir.json` | `GET /api/files?path=/shelf-test` (a directory shelf created) |
 | `discovery.txt` | UDP `hello` to port 8134 |
+| `files_missing_1.6.1.json` | `GET /api/files?path=/Books` on an X4 running **1.6.1** where `/Books` does not exist (HTTP 500) |
 
 ## Device used
 

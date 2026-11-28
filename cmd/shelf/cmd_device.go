@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -17,8 +18,11 @@ import (
 var cmdDevices = &command{
 	name:    "devices",
 	summary: "list configured devices and discover them on the network",
-	usage:   "devices [--discover] [--timeout D] [--json]",
+	usage:   "devices [--discover] [--timeout D] [--json] | devices add NICKNAME --host HOST [--root /Books]",
 	run: func(ctx context.Context, a *app, args []string) error {
+		if len(args) > 0 && args[0] == "add" {
+			return devicesAdd(a, args[1:])
+		}
 		fs := newFlagSet("devices")
 		discover := fs.Bool("discover", false, "broadcast a discovery request on the local network")
 		timeout := fs.Duration("timeout", 3*time.Second, "discovery timeout")
@@ -275,4 +279,47 @@ func checkSDCard(ctx context.Context, w *tabwriter.Writer, d config.Device) {
 		return
 	}
 	fmt.Fprintf(w, "  root %s\tok (%d entries)\n", root, len(files))
+}
+
+// devicesAdd appends a network device to config.toml, the same as the TUI's
+// add-device form, so a reader can be set up without opening an editor.
+func devicesAdd(a *app, args []string) error {
+	fs := newFlagSet("devices add")
+	host := fs.String("host", "", "the reader's address, e.g. 192.168.1.42 or crosspoint.local")
+	root := fs.String("root", "/Books", "folder on the device that shelf syncs into")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("%w: expected exactly one nickname", errUsage)
+	}
+	cfg, err := a.config()
+	if err != nil {
+		return err
+	}
+
+	d := config.Device{Nickname: strings.TrimSpace(fs.Arg(0)), Host: strings.TrimSpace(*host), Root: strings.TrimSpace(*root)}
+	switch {
+	case d.Nickname == "":
+		return fmt.Errorf("%w: nickname is required", errUsage)
+	case d.Host == "":
+		// Saved without a host, the device would depend on discovery at
+		// every sync; say so here rather than at the first failed sync.
+		return fmt.Errorf("%w: --host is required (find it with 'shelf devices --discover')", errUsage)
+	case strings.ContainsAny(d.Host, "/ "):
+		return fmt.Errorf("%w: --host is a name or address, not a URL", errUsage)
+	}
+	if d.Root != "" && !strings.HasPrefix(d.Root, "/") {
+		d.Root = "/" + d.Root
+	}
+
+	file := a.configPath
+	if file == "" {
+		file = cfg.Paths.ConfigFile()
+	}
+	if _, err := config.AppendDevice(file, cfg.Paths, d); err != nil {
+		return err
+	}
+	fmt.Printf("added %q (%s) to %s\n", d.Nickname, d.Host, file)
+	return nil
 }

@@ -22,6 +22,11 @@ const (
 	envDataHome   = "XDG_DATA_HOME"
 	envStateHome  = "XDG_STATE_HOME"
 	envCacheHome  = "XDG_CACHE_HOME"
+
+	// envStorageDir is set by Outpost, which backs up and restores that one
+	// directory and nothing else. Spelled out here rather than imported from
+	// internal/outpost so config stays a leaf package.
+	envStorageDir = "OUTPOST_STORAGE_DIR"
 )
 
 // Paths resolves every directory shelf writes to.
@@ -30,10 +35,25 @@ type Paths struct {
 	Data   string // index.db
 	State  string // devices/<uuid>.json, shelf.log
 	Cache  string // optimized/, cover thumbnails
+
+	// Storage is the Outpost storage directory everything else sits under,
+	// or empty when shelf is not running under Outpost.
+	Storage string
 }
 
 // DefaultPaths resolves the standard locations for the current user.
+//
+// Under Outpost every directory moves inside OUTPOST_STORAGE_DIR instead. That
+// directory is the unit Outpost backs up and restores, so state written under
+// $HOME would survive neither — and progress.db, which cannot be rebuilt, is
+// part of that state. The storage directory wins over XDG_* because Outpost
+// passes its own environment through, and a stray XDG_DATA_HOME there must
+// not route the progress store out of the backup.
 func DefaultPaths() (Paths, error) {
+	if s := os.Getenv(envStorageDir); filepath.IsAbs(s) {
+		return StoragePaths(s), nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Paths{}, fmt.Errorf("resolve home directory: %w", err)
@@ -45,6 +65,25 @@ func DefaultPaths() (Paths, error) {
 		State:  baseDir(envStateHome, home, filepath.Join(".local", "state")),
 		Cache:  baseDir(envCacheHome, home, ".cache"),
 	}, nil
+}
+
+// StoragePaths lays shelf's directories out under one storage root.
+func StoragePaths(root string) Paths {
+	return Paths{
+		Config:  filepath.Join(root, "config"),
+		Data:    filepath.Join(root, "data"),
+		State:   filepath.Join(root, "state"),
+		Cache:   filepath.Join(root, "cache"),
+		Storage: root,
+	}
+}
+
+// LibraryDir is the default library root under Outpost storage.
+func (p Paths) LibraryDir() string {
+	if p.Storage == "" {
+		return ""
+	}
+	return filepath.Join(p.Storage, "library")
 }
 
 // baseDir returns $env/shelf when env holds an absolute path, else
@@ -74,6 +113,19 @@ func (p Paths) IndexFile() string { return filepath.Join(p.Data, "index.db") }
 // rebuilt from anything. The device pushes reading positions here and keeps no
 // synchronised copy, so deleting it loses where you are in every book.
 func (p Paths) ProgressFile() string { return filepath.Join(p.Data, "progress.db") }
+
+// AIFile holds answers from the operator's AI models, keyed by book hash.
+//
+// Under Data, and kept apart from index.db, because it is not disposable:
+// every answer cost the operator a model call, and rebuilding the index must
+// not mean paying for them all again.
+func (p Paths) AIFile() string { return filepath.Join(p.Data, "ai.db") }
+
+// MailStateFile is the cursor of the last mail message imported.
+func (p Paths) MailStateFile() string { return filepath.Join(p.Data, "mail.json") }
+
+// MailStageDir is scratch space for building a mail message's EPUB.
+func (p Paths) MailStageDir() string { return filepath.Join(p.Cache, "mail") }
 
 // LogFile is where shelf logs; never stdout, which belongs to the display.
 func (p Paths) LogFile() string { return filepath.Join(p.State, "shelf.log") }

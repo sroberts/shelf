@@ -100,7 +100,7 @@ func (s *Store) init() error {
 	}
 	switch {
 	case version == storeSchemaVersion:
-		return nil
+		return s.ensureSelfRegistered()
 	case version != 0:
 		// Refuse rather than guess. This database holds the only copy of your
 		// reading positions, so a wrong migration is not recoverable by
@@ -119,6 +119,73 @@ func (s *Store) init() error {
 	}
 	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, storeSchemaVersion)); err != nil {
 		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.ensureSelfRegistered()
+}
+
+// selfRegisteredSchema lists the accounts made through POST /users/create.
+//
+// That endpoint takes no credentials, so anyone who can reach it can make an
+// account; such an account is good for progress sync and the catalog, which is
+// all registration ever offered, and nothing more. Kept in a table of its own,
+// created if missing, rather than as a column under a new schema version: an
+// older shelf opening this store then neither refuses it nor needs to know.
+// An older shelf deleting a user leaves its row behind, and a later account of
+// that name inherits less access, never more.
+const selfRegisteredSchema = `
+CREATE TABLE IF NOT EXISTS self_registered (
+  username TEXT PRIMARY KEY
+);
+`
+
+func (s *Store) ensureSelfRegistered() error {
+	if _, err := s.db.Exec(selfRegisteredSchema); err != nil {
+		return fmt.Errorf("kosync: create schema: %w", err)
+	}
+	return s.ensureAdmins()
+}
+
+// adminsSchema lists the accounts that may use the web UI, the API and MCP.
+//
+// Every other account is a reader account: the catalog and progress sync, and
+// nothing more. A reader account's password is typed on the e-reader, sent as
+// Basic auth to the catalog, and may face the internet through Funnel, so if
+// it leaks it must not also be able to upload, rewrite books, add devices or
+// reset other accounts. Admin is a grant rather than a restriction for the
+// same reason the self_registered table is a table: an older shelf that makes
+// an account leaves no row here, and that account gets less access, not more.
+const adminsSchema = `
+CREATE TABLE admins (
+  username TEXT PRIMARY KEY
+);
+`
+
+// ensureAdmins creates the admins table the first time a store is opened by a
+// shelf that has it. Accounts that existed before are made admins, except the
+// ones the reader registered itself: before roles, every operator-made account
+// could use the API, and taking that away on upgrade would lock the owner out.
+func (s *Store) ensureAdmins() error {
+	var exists int
+	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'admins'`).Scan(&exists); err != nil {
+		return fmt.Errorf("kosync: read schema: %w", err)
+	}
+	if exists > 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(adminsSchema); err != nil {
+		return fmt.Errorf("kosync: create schema: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO admins (username)
+		SELECT username FROM users WHERE username NOT IN (SELECT username FROM self_registered)`); err != nil {
+		return fmt.Errorf("kosync: grant existing accounts: %w", err)
 	}
 	return tx.Commit()
 }
@@ -141,8 +208,69 @@ func (s *Store) Path() string { return s.path }
 // and shelf does not get to raise it. What the salting buys is narrow and real:
 // the database file stops being a list of working credentials.
 
-// CreateUser registers a user. key is the MD5 the client sends.
+// CreateUser adds a reader account the operator made, from the command line,
+// the API or the web UI: the catalog and progress sync. key is the MD5 the
+// client sends.
 func (s *Store) CreateUser(username, key string) error {
+	return s.createUser(username, key, false, false)
+}
+
+// CreateAdmin adds an account that may also use the web UI, the API and MCP.
+func (s *Store) CreateAdmin(username, key string) error {
+	return s.createUser(username, key, false, true)
+}
+
+// IsAdmin reports whether an account may use the web UI, the API and MCP.
+func (s *Store) IsAdmin(username string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM admins WHERE username = ?`,
+		NormalizeUsername(username)).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("kosync: look up user: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SetAdmin grants or withdraws an account's admin access. Its password and
+// reading positions are unchanged.
+func (s *Store) SetAdmin(username string, admin bool) error {
+	username = NormalizeUsername(username)
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM users WHERE username = ?`, username).Scan(&n); err != nil {
+		return fmt.Errorf("kosync: look up user: %w", err)
+	}
+	if n == 0 {
+		return ErrNoSuchUser
+	}
+	q := `DELETE FROM admins WHERE username = ?`
+	if admin {
+		q = `INSERT OR REPLACE INTO admins (username) VALUES (?)`
+	}
+	if _, err := s.db.Exec(q, username); err != nil {
+		return fmt.Errorf("kosync: set role: %w", err)
+	}
+	return nil
+}
+
+// RegisterUser adds an account through the unauthenticated registration
+// endpoint. It works for progress sync and the catalog; SelfRegistered
+// reports it, so a caller can keep it out of anything more.
+func (s *Store) RegisterUser(username, key string) error {
+	return s.createUser(username, key, true, false)
+}
+
+// SelfRegistered reports whether an account was made by RegisterUser.
+func (s *Store) SelfRegistered(username string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM self_registered WHERE username = ?`,
+		NormalizeUsername(username)).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("kosync: look up user: %w", err)
+	}
+	return n > 0, nil
+}
+
+func (s *Store) createUser(username, key string, registered, admin bool) error {
 	username = NormalizeUsername(username)
 	if username == "" || key == "" {
 		return ErrEmptyRequest
@@ -154,7 +282,13 @@ func (s *Store) CreateUser(username, key string) error {
 	}
 	saltHex := hex.EncodeToString(salt)
 
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
 		`INSERT INTO users (username, salt, key_hash, created_at) VALUES (?,?,?,?)`,
 		username, saltHex, hashKey(saltHex, key), time.Now().Unix())
 	if err != nil {
@@ -165,7 +299,24 @@ func (s *Store) CreateUser(username, key string) error {
 		}
 		return fmt.Errorf("kosync: create user: %w", err)
 	}
-	return nil
+	// Cleared for an operator's account in case an older shelf left a stale
+	// row for a user of this name; the same transaction, so the account never
+	// exists for a moment with the wrong access.
+	mark := `DELETE FROM self_registered WHERE username = ?`
+	if registered {
+		mark = `INSERT OR REPLACE INTO self_registered (username) VALUES (?)`
+	}
+	if _, err := tx.Exec(mark, username); err != nil {
+		return fmt.Errorf("kosync: create user: %w", err)
+	}
+	role := `DELETE FROM admins WHERE username = ?`
+	if admin {
+		role = `INSERT OR REPLACE INTO admins (username) VALUES (?)`
+	}
+	if _, err := tx.Exec(role, username); err != nil {
+		return fmt.Errorf("kosync: create user: %w", err)
+	}
+	return tx.Commit()
 }
 
 // Authenticate verifies a username and auth key.
@@ -273,6 +424,12 @@ func (s *Store) DeleteUser(username string) error {
 	if _, err := tx.Exec(`DELETE FROM progress WHERE username = ?`, username); err != nil {
 		return fmt.Errorf("kosync: delete progress: %w", err)
 	}
+	if _, err := tx.Exec(`DELETE FROM self_registered WHERE username = ?`, username); err != nil {
+		return fmt.Errorf("kosync: delete user: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM admins WHERE username = ?`, username); err != nil {
+		return fmt.Errorf("kosync: delete user: %w", err)
+	}
 	return tx.Commit()
 }
 
@@ -281,12 +438,15 @@ type UserInfo struct {
 	Username  string
 	CreatedAt int64
 	Books     int
+	// Admin is true for an account that may use the web UI, API and MCP.
+	Admin bool
 }
 
 // UserList returns every account with how many books it has progress for.
 func (s *Store) UserList() ([]UserInfo, error) {
 	rows, err := s.db.Query(`
-SELECT u.username, u.created_at, (SELECT count(*) FROM progress p WHERE p.username = u.username)
+SELECT u.username, u.created_at, (SELECT count(*) FROM progress p WHERE p.username = u.username),
+       EXISTS (SELECT 1 FROM admins a WHERE a.username = u.username)
 FROM users u ORDER BY u.username`)
 	if err != nil {
 		return nil, fmt.Errorf("kosync: list users: %w", err)
@@ -296,7 +456,7 @@ FROM users u ORDER BY u.username`)
 	var out []UserInfo
 	for rows.Next() {
 		var u UserInfo
-		if err := rows.Scan(&u.Username, &u.CreatedAt, &u.Books); err != nil {
+		if err := rows.Scan(&u.Username, &u.CreatedAt, &u.Books, &u.Admin); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -421,6 +581,24 @@ FROM progress WHERE username = ?`, username)
 		out[p.Document] = p
 	}
 	return out, rows.Err()
+}
+
+// DeleteProgress forgets a user's position in one document. It reports
+// ErrNoProgress when there was none, so a caller can tell a typo from a clear.
+//
+// This forgets only shelf's copy. The reader keeps its own position and pushes
+// it again the next time the book is open with sync on; clearing is for a
+// position that should stop showing up here, not a way to move the reader.
+func (s *Store) DeleteProgress(username, document string) error {
+	res, err := s.db.Exec(`DELETE FROM progress WHERE username = ? AND document = ?`,
+		NormalizeUsername(username), document)
+	if err != nil {
+		return fmt.Errorf("kosync: delete progress: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNoProgress
+	}
+	return nil
 }
 
 // Users lists registered usernames.

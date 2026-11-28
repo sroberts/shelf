@@ -1,0 +1,82 @@
+/* The Showroom. Near-white and near-black grounds, neutral greys with no warm
+   or cool cast, and one accent: near-black (near-white in dark mode). The
+   books are the colour; the interface lends only meaning (danger, caution).
+   Every text pairing below is checked at WCAG 2.2 AA in both modes, and
+   field edges at 3:1. Secondary text (--muted) stays off --tile-2, where it
+   falls to 4.2:1. */
+:root {
+  color-scheme: light dark;
+
+  --ground: #ffffff;
+  --tile: #f5f5f7; /* the plinth a cover sits on; secondary surfaces */
+  --tile-2: #e8e8ed; /* pressed, selected and segmented fills */
+  --ink: #1d1d1f;
+  --ink-2: #424245;
+  --muted: #6e6e73;
+  --hairline: #d2d2d7;
+  --field-border: #86868b; /* 3.3:1 on tile, 3.6:1 on ground */
+  --accent: #1d1d1f; /* the only accent */
+  --accent-hover: #000000;
+  --accent-ink: #ffffff;
+  --danger: #c62a1e;
+  --danger-wash: #fdeceb;
+  --caution: #8a5300;
+  --caution-wash: #fdf3e3;
+  --focus: #1d1d1f;
+  --scrim: rgb(0 0 0 / 0.32);
+
+  /* Only covers and overlays cast shadows. */
+  --lift: 0 1px 2px rgb(0 0 0 / 0.12), 0 10px 24px -8px rgb(0 0 0 / 0.28);
+  --lift-hover: 0 2px 4px rgb(0 0 0 / 0.12), 0 18px 32px -10px rgb(0 0 0 / 0.32);
+  --float: 0 2px 6px rgb(0 0 0 / 0.06), 0 16px 48px -12px rgb(0 0 0 / 0.24);
+
+  --sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Type scale: page title, section title, body, meta, small. */
+  --text-display: clamp(1.75rem, 1.35rem + 1.6vw, 2.5rem);
+  --text-title: 1.25rem;
+  --text-body: 1rem;
+  --text-meta: 0.875rem;
+  --text-small: 0.8125rem;
+
+  --radius-tile: 18px;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-cover: 3px;
+  --gap: 1rem;
+  --page: 76rem;
+  --bar: 3.25rem;
+  --tabs: 3.75rem;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* The select's drawn chevron, in ink; a data URI cannot read a variable. */
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%231d1d1f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #000000;
+    --tile: #1c1c1e;
+    --tile-2: #2c2c2e;
+    --ink: #f5f5f7;
+    --ink-2: #d1d1d6;
+    --muted: #98989d;
+    --hairline: #38383a;
+    --field-border: #7c7c80;
+    --accent: #f5f5f7;
+    --accent-hover: #ffffff;
+    --accent-ink: #000000;
+    --danger: #ff7066;
+    --danger-wash: #3a1714;
+    --caution: #f0a83a;
+    --caution-wash: #33240c;
+    --focus: #f5f5f7;
+    --scrim: rgb(0 0 0 / 0.6);
+    /* A shadow barely shows on a dark plinth, so the cover also gets a faint
+       light rim: the lift still reads at night. */
+    --lift: 0 0 0 1px rgb(255 255 255 / 0.1), 0 1px 2px rgb(0 0 0 / 0.6), 0 14px 28px -8px rgb(0 0 0 / 0.9);
+    --lift-hover: 0 0 0 1px rgb(255 255 255 / 0.16), 0 2px 4px rgb(0 0 0 / 0.6), 0 22px 36px -10px rgb(0 0 0 / 0.95);
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23f5f5f7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    --float: 0 0 0 1px #38383a, 0 16px 48px -12px rgb(0 0 0 / 0.8);
+  }
+}

@@ -1,0 +1,30 @@
+# outpost.toml — how Outpost installs and runs shelf.
+# Contract: outpost-service-spec.md, revision v0.9.4. Every field is a default
+# the operator can override.
+
+name        = "shelf"
+title       = "shelf"
+description = "E-book library: OPDS catalog and KOReader progress sync for CrossPoint readers"
+
+# The port comes from OUTPOST_PORT, which `outpost add` writes into the
+# manifest, so no --port is needed here. --scan indexes the library (by
+# default $OUTPOST_STORAGE_DIR/library) in the background at each start.
+args        = ["serve", "--scan"]
+healthcheck = "/up"
+
+# MCP over Streamable HTTP at /mcp, which `outpost add` writes into the
+# manifest as mcp_path. REST is under /v1, described at /v1/openapi.json.
+mcp = true
+
+# The e-reader cannot sign in to the gateway: it has no browser, and it speaks
+# HTTP Basic (OPDS) and x-auth-user/x-auth-key (kosync) with shelf's own
+# accounts. These are the paths it uses, and shelf authenticates every one of
+# them itself. Account creation is left behind the gateway on purpose; make
+# accounts with `shelf user add` instead.
+public_paths = [
+  "/opds",
+  "/opds/*",
+  "/users/auth",
+  "/syncs/progress",
+  "/syncs/progress/*",
+]

@@ -48,12 +48,21 @@ func (e Entry) Open() ([]byte, error) {
 	}
 	defer rc.Close()
 
-	body, err := io.ReadAll(rc)
+	// Bounded because the size in the zip header is whatever the file's
+	// author wrote: deflate reaches a thousand to one, so an upload within
+	// its limit could otherwise expand into more memory than the machine has.
+	body, err := io.ReadAll(io.LimitReader(rc, MaxEntrySize+1))
 	if err != nil {
 		return nil, fmt.Errorf("epub: read %s: %w", e.Name, err)
 	}
+	if int64(len(body)) > MaxEntrySize {
+		return nil, fmt.Errorf("epub: %s is over %d MiB uncompressed", e.Name, MaxEntrySize>>20)
+	}
 	return body, nil
 }
+
+// MaxEntrySize bounds one entry read into memory by Entry.Open.
+const MaxEntrySize = 256 << 20
 
 // IsOPF reports whether this entry is the package document.
 func (f *File) IsOPF(name string) bool { return name == f.opfPath }

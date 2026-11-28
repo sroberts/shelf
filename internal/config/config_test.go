@@ -10,6 +10,7 @@ import (
 )
 
 func TestDefaultPathsHonorsXDG(t *testing.T) {
+	t.Setenv(envStorageDir, "")
 	root := t.TempDir()
 	t.Setenv(envConfigHome, filepath.Join(root, "cfg"))
 	t.Setenv(envDataHome, filepath.Join(root, "data"))
@@ -37,7 +38,7 @@ func TestDefaultPathsHonorsXDG(t *testing.T) {
 // library on both a Mac and a Linux box should find shelf's state in the same
 // relative place on each.
 func TestDefaultPathsFallbackIsPlatformIndependent(t *testing.T) {
-	for _, env := range []string{envConfigHome, envDataHome, envStateHome, envCacheHome} {
+	for _, env := range []string{envConfigHome, envDataHome, envStateHome, envCacheHome, envStorageDir} {
 		t.Setenv(env, "")
 	}
 
@@ -63,6 +64,7 @@ func TestDefaultPathsFallbackIsPlatformIndependent(t *testing.T) {
 
 // Relative XDG values must be ignored, per the XDG base directory spec.
 func TestDefaultPathsIgnoresRelativeXDG(t *testing.T) {
+	t.Setenv(envStorageDir, "")
 	t.Setenv(envConfigHome, "relative/path")
 	p, err := DefaultPaths()
 	if err != nil {
@@ -71,6 +73,51 @@ func TestDefaultPathsIgnoresRelativeXDG(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	if want := filepath.Join(home, ".config", "shelf"); p.Config != want {
 		t.Errorf("got %q, want %q", p.Config, want)
+	}
+}
+
+// Under Outpost the storage directory is the only thing backed up and restored,
+// so every path must land inside it — and it must beat XDG_*, which Outpost
+// passes through from its own environment.
+func TestDefaultPathsUnderOutpostStayInStorage(t *testing.T) {
+	storage := t.TempDir()
+	t.Setenv(envStorageDir, storage)
+	t.Setenv(envDataHome, filepath.Join(t.TempDir(), "elsewhere"))
+
+	p, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, dir := range map[string]string{
+		"config": p.Config, "data": p.Data, "state": p.State, "cache": p.Cache,
+		"progress": p.ProgressFile(), "index": p.IndexFile(), "shelves": p.ShelvesFile(),
+		"library": p.LibraryDir(),
+	} {
+		rel, err := filepath.Rel(storage, dir)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			t.Errorf("%s path %q is not inside storage %q", name, dir, storage)
+		}
+	}
+
+	cfg, err := LoadFile(p.ConfigFile(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LibraryRoot != p.LibraryDir() {
+		t.Errorf("LibraryRoot = %q, want %q", cfg.LibraryRoot, p.LibraryDir())
+	}
+}
+
+// A relative storage directory is not something Outpost hands out; treating it
+// as unset is safer than resolving it against whatever the cwd happens to be.
+func TestDefaultPathsIgnoresRelativeStorage(t *testing.T) {
+	t.Setenv(envStorageDir, "relative/storage")
+	p, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Storage != "" {
+		t.Errorf("Storage = %q, want empty", p.Storage)
 	}
 }
 
@@ -170,6 +217,18 @@ func TestValidate(t *testing.T) {
 			name:    "duplicate nickname",
 			toml:    "[[device]]\nnickname='x4'\n[[device]]\nnickname='x4'",
 			wantErr: "duplicate device nickname",
+		},
+		{
+			// The nickname names a file in the state directory; the API
+			// writes it from a request body.
+			name:    "nickname that climbs out of the state directory",
+			toml:    "[[device]]\nnickname='../../.ssh/x4'",
+			wantErr: "nickname must not contain a slash",
+		},
+		{
+			name:    "nickname with a backslash",
+			toml:    "[[device]]\nnickname='..\\\\x4'",
+			wantErr: "nickname must not contain a slash",
 		},
 		{
 			name:    "sd transport without mount",

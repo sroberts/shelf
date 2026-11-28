@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 )
@@ -168,6 +169,12 @@ func LoadFile(file string, paths Paths) (Config, error) {
 	cfg := Default()
 	cfg.Paths = paths
 	cfg.File = file
+	// Under Outpost the books default to living inside storage too, so the
+	// library is in the backup alongside the index and shelves that describe
+	// it. A library_root in the file, or --library, still wins.
+	if dir := paths.LibraryDir(); dir != "" {
+		cfg.LibraryRoot = dir
+	}
 
 	data, err := os.ReadFile(file)
 	switch {
@@ -248,6 +255,12 @@ func (c *Config) Validate() error {
 
 		if d.Nickname == "" {
 			return fmt.Errorf("%s: nickname is required", where)
+		}
+		// The nickname names the device's manifest file on disk
+		// (Paths.DeviceStateFile), and the API takes it from a request
+		// body, so a separator would put that file anywhere.
+		if strings.ContainsAny(d.Nickname, `/\`) || strings.ContainsFunc(d.Nickname, unicode.IsControl) {
+			return fmt.Errorf("%s: nickname must not contain a slash, a backslash or a control character", where)
 		}
 		if seen[d.Nickname] {
 			return fmt.Errorf("duplicate device nickname %q", d.Nickname)

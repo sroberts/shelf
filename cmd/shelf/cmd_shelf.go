@@ -176,7 +176,7 @@ func shelfShow(a *app, args []string) error {
 			fmt.Println(b.Path)
 		}
 	default:
-		printBookTable(books, byDoc)
+		printBookTable(books, byDoc, a.genres())
 	}
 	return nil
 }
